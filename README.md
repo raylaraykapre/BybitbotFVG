@@ -173,6 +173,48 @@ so clearly on startup and exits instead of spamming the API.
 
 ---
 
+## Troubleshooting
+
+### `retCode 10003: API key is invalid`
+Bybit has **four independent environments** and an API key only works on the
+one it was created in:
+
+| Environment    | Host                          | config.json |
+|----------------|-------------------------------|-------------|
+| mainnet        | `api.bybit.com`               | `demo=false` (real money) |
+| **mainnet-demo** | `api-demo.bybit.com`        | `demo=true` (bot default) |
+| testnet        | `api-testnet.bybit.com`       | `testnet=true` |
+
+`10003` means your key does **not** belong to the environment the bot is
+calling. The usual cause: you created a normal key on the mainnet API page
+instead of from **inside Demo Trading**.
+
+Run the built-in diagnostic to see exactly where your key is valid:
+```bash
+python3 check_api.py
+```
+
+**To create a proper DEMO key:**
+1. Log in to your normal Bybit (mainnet) account.
+2. Switch to **Demo Trading** — it is a *separate account with its own user ID*.
+3. While **in** Demo Trading, open the **API** menu (hover your avatar → API)
+   and create a key with **Read + Trade (Unified Trading)** permission.
+4. Put that key/secret into `config.json` with `api.demo = true`.
+
+### `retCode 10004: error sign`
+Wrong `api_secret`, or a very large device clock skew. Re-copy the secret.
+The bot already auto-syncs time with Bybit, so clock skew is rarely the cause.
+
+### `retCode 10005 / 33004`
+The key lacks trade permission, or it has expired. Recreate it with
+Unified Trading **trade** permission.
+
+### IP restriction
+If you set an IP whitelist when creating the key, your phone/VPS IP must be
+included, or every signed call will fail.
+
+---
+
 ## Files
 
 | File              | Purpose                                                  |
@@ -182,6 +224,7 @@ so clearly on startup and exits instead of spamming the API.
 | `fvg.py`          | LuxAlgo Fair Value Gap detection, ported to Python.      |
 | `strategy.py`     | Retrace-to-mid entries, chaining, ROI SL/TP, sizing.     |
 | `config.json`     | All user-editable settings.                              |
+| `check_api.py`    | Diagnose which Bybit environment your API key belongs to.|
 | `LICENSE`         | CC BY-NC-SA 4.0 + credit to LuxAlgo.                      |
 
 ---

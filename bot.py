@@ -109,11 +109,28 @@ class Bot:
                  self.to_display(wallet), self.settle_coin, avail))
             return True
         except BybitError as exc:
-            if exc.ret_code in (10003, 10004, 10005, 33004):
+            host = self.client.host
+            if exc.ret_code == 10003:
                 self.log.error(
-                    "API credentials rejected (retCode %s: %s). Check that "
-                    "the key is a DEMO key, not expired, and has trade "
-                    "permission." % (exc.ret_code, exc.ret_msg))
+                    "API key rejected (retCode 10003: %s). This almost always "
+                    "means the key does NOT belong to the environment the bot "
+                    "is calling (%s). Bybit has 4 separate envs: mainnet, "
+                    "mainnet-demo, testnet, testnet-demo - a key only works on "
+                    "the one it was created in." % (exc.ret_msg, host))
+                self.log.error(
+                    "Fix: create the key from INSIDE Demo Trading (separate "
+                    "account/user ID) and keep api.demo=true. Run "
+                    "`python3 check_api.py` to see which env your key matches.")
+            elif exc.ret_code == 10004:
+                self.log.error(
+                    "Signature error (retCode 10004): wrong api_secret or a "
+                    "large device clock skew. Re-copy the secret; the bot "
+                    "auto-syncs time. Run `python3 check_api.py` to diagnose.")
+            elif exc.ret_code in (10005, 33004):
+                self.log.error(
+                    "API key problem (retCode %s: %s): key may lack trade "
+                    "permission or be expired." %
+                    (exc.ret_code, exc.ret_msg))
             else:
                 self.log.error("Validation call failed: %s" % exc)
             return False
