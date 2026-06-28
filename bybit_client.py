@@ -285,24 +285,40 @@ class BybitClient:
                             params=params, auth=True)
 
     def get_coin_balance(self, coin="USDT", account_type="UNIFIED"):
-        """Return (walletBalance, availableBalance) floats for a coin."""
+        """Return (walletBalance, availableBalance) floats for a coin.
+
+        Reads the per-coin figures first, then falls back to the
+        account-level totals so sizing always sees the *whole* wallet.
+        """
         resp = self.get_wallet_balance(account_type=account_type, coin=coin)
         lst = resp.get("result", {}).get("list", [])
         if not lst:
             return 0.0, 0.0
         account = lst[0]
+
+        wallet = 0.0
+        avail = 0.0
         for c in account.get("coin", []):
             if c.get("coin") == coin:
                 wallet = _to_float(c.get("walletBalance"))
-                avail = _to_float(c.get("availableToWithdraw"))
-                if avail == 0.0:
-                    avail = _to_float(c.get("availableToBorrow")) or wallet
-                # Prefer free/transferable balance when present
-                free = _to_float(c.get("free"))
-                if free:
-                    avail = free
-                return wallet, (avail or wallet)
-        return 0.0, 0.0
+                # Candidate "free" figures, in order of preference.
+                for key in ("availableToWithdraw", "free",
+                            "availableBalance", "transferBalance"):
+                    val = _to_float(c.get(key))
+                    if val:
+                        avail = val
+                        break
+                break
+
+        # Account-level totals (UNIFIED reports these in USD terms).
+        acct_wallet = _to_float(account.get("totalWalletBalance"))
+        acct_avail = _to_float(account.get("totalAvailableBalance"))
+
+        if wallet == 0.0 and acct_wallet:
+            wallet = acct_wallet
+        if avail == 0.0:
+            avail = acct_avail or wallet
+        return wallet, (avail or wallet)
 
     def get_positions(self, category, symbol=None, settle_coin=None):
         params = {"category": category}

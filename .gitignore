@@ -4,3 +4,6 @@ __pycache__/
 run.out
 nohup.out
 .venv/
+
+paper_state.json
+*.tmp

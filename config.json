@@ -1,4 +1,12 @@
 {
+  "mode": "paper",
+  "paper": {
+    "starting_balance": 100000,
+    "balance_currency": "PHP",
+    "taker_fee_pct": 0.055,
+    "state_file": "paper_state.json",
+    "reset_on_start": false
+  },
   "api": {
     "api_key": "YOUR_DEMO_API_KEY",
     "api_secret": "YOUR_DEMO_API_SECRET",

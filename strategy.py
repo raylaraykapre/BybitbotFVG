@@ -69,6 +69,7 @@ class FVGStrategy:
         # state
         self.pending = None
         self.last_closed_start = None
+        self.last_price = None
         self.interval_ms = INTERVAL_MS.get(self.timeframe, 300_000)
 
     # ------------------------------------------------------------------ #
@@ -236,12 +237,34 @@ class FVGStrategy:
         return self.pending is not None and not self.pending["triggered"]
 
     def retrace_reached(self, last_price):
+        """True when price retraces to the FVG mid *from the origin side*.
+
+        A bearish FVG sits ABOVE the post-gap price, so we wait for price to
+        rise UP through the mid (origin side = below mid). A bullish FVG sits
+        BELOW the post-gap price, so we wait for price to fall DOWN through the
+        mid (origin side = above mid). We require an actual crossing (using the
+        previous observed price) so a setup that is already past its mid does
+        not fire instantly, and we keep the trigger inside the gap zone.
+        """
         if not self.has_pending():
+            self.last_price = last_price
             return False
-        mid = self.pending["mid"]
-        if self.pending["direction"] == "long":
-            return last_price <= mid
-        return last_price >= mid
+
+        p = self.pending
+        mid = p["mid"]
+        prev = self.last_price
+        self.last_price = last_price
+
+        if prev is None:
+            # First observation: just record which side we start on.
+            return False
+
+        if p["direction"] == "short":
+            # price must cross up to the mid from below, still within the gap
+            return prev < mid <= last_price <= p["top"]
+        else:
+            # price must cross down to the mid from above, still within the gap
+            return prev > mid >= last_price >= p["bottom"]
 
     def prepare_entry(self, balance, price):
         """Return an order spec dict if a position can be sized, else None.

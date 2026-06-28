@@ -3,8 +3,8 @@
 A **pure-Python** Fair Value Gap (FVG) auto-trading bot for **Bybit**, built
 to run on **Termux** (Android) and **Linux**. It trades the
 [LuxAlgo "Fair Value Gap"](https://www.tradingview.com/) strategy on Bybit's
-USDT perpetual contracts using Bybit's **Demo Trading** environment by
-default.
+USDT perpetual contracts. It ships with a **standalone built-in demo** so you
+can run it immediately with **no Bybit account and no API keys**.
 
 > No `pip`, no `requests`, no third-party packages. It uses **only the Python
 > standard library** (`urllib`, `hmac`, `hashlib`, `json`). If you have
@@ -13,6 +13,27 @@ default.
 The FVG detection logic is ported from the **"Fair Value Gap [LuxAlgo]"**
 Pine Script indicator (© LuxAlgo, CC BY-NC-SA 4.0). See [LICENSE](LICENSE)
 for full credit and license terms.
+
+---
+
+## Modes: standalone demo vs live
+
+Set `"mode"` in `config.json`:
+
+| Mode | What it does | Needs API keys? |
+|------|--------------|-----------------|
+| **`paper`** (default) | **Standalone built-in demo.** The bot keeps its *own* simulated wallet and positions inside the program, fetches live public prices, and fills Take Profit / Stop Loss locally. Nothing is sent to any exchange account. | **No** |
+| `live` | Sends real orders to Bybit (demo account if `api.demo=true`, else mainnet). | Yes |
+
+The standalone demo:
+- Starts with a configurable wallet (`paper.starting_balance`, in PHP by
+  default) and **persists** to `paper_state.json`, so balance and open
+  positions survive restarts.
+- Uses **only public market data** (klines + tickers) — these need no
+  authentication, so you can paper-trade without ever creating a key.
+- Simulates taker fees (`paper.taker_fee_pct`) and tracks realised PnL,
+  wins and losses.
+- Set `paper.reset_on_start: true` to wipe it back to the starting balance.
 
 ---
 
@@ -25,12 +46,13 @@ for full credit and license terms.
    - **Bullish FVG** → arms a **LONG**.
    - **Bearish FVG** → arms a **SHORT**.
 3. Waits for price to **retrace back to the mid** of the identified FVG, then
-   opens a market position in that direction.
+   opens a position in that direction.
 4. **FVG chaining:** if a new FVG forms *right after* the previous one (on the
    immediately following candle), the pending entry is **reconstructed to the
    mid of the newer FVG**. This continues for up to **3** consecutive FVGs
    (`max_fvg_chain`).
-5. Sizes every position at **85%** of wallet balance (`position_size_pct`).
+5. Sizes every position at **85%** of the **whole wallet balance**
+   (`position_size_pct`, editable up or down anytime).
 6. Sets leverage **per pair** as a **percent of that pair's maximum leverage**
    (`leverage_pct`). For example, at `leverage_pct = 75`:
    - a pair whose max leverage is **100x** → **75x**
@@ -50,15 +72,19 @@ for full credit and license terms.
 > each pair's max leverage from Bybit and applies your percentage to it,
 > snapping to the pair's allowed leverage step.
 
+> **Position sizing:** every entry uses `position_size_pct` of the full wallet
+> balance as margin (notional = margin × leverage). The default is **85%**;
+> change it in `config.json` at any time.
+
 ---
 
 ## Important notes about "currency in PHP"
 
 Bybit crypto **perpetual contracts settle in USDT** — there is no native PHP
-wallet for derivatives. So the bot trades the USDT-settled contract and
-**displays/accounts all balances and PnL in PHP** using a configurable
-exchange rate (`currency.usdt_to_php_rate`). Update that rate to match the
-current USDT→PHP rate whenever you like.
+wallet for derivatives. The bot computes sizing/PnL internally in USDT (the
+contract unit) and **displays everything in PHP** using a configurable rate
+(`currency.usdt_to_php_rate`). In the standalone demo you can even set the
+starting balance directly in PHP (`paper.balance_currency: "PHP"`).
 
 ---
 
@@ -84,15 +110,21 @@ There is nothing to `pip install`.
 
 ---
 
-## Get your Bybit DEMO API keys
+## Get your Bybit API keys (LIVE mode only)
 
-1. Log in to Bybit and open **Demo Trading** (the simulated account).
-2. Inside the Demo Trading account, create an **API key** with **read +
-   trade** (Unified Trading / Contract) permissions.
-3. Copy the key and secret into `config.json`.
+> **Skip this entirely if you use the default `mode: "paper"`** — the
+> standalone demo needs no keys.
 
-> Demo keys ONLY work against `https://api-demo.bybit.com`, which is what the
-> bot uses when `api.demo = true`. Do not create the key from Testnet.
+For `mode: "live"`:
+1. Log in to Bybit and open **Demo Trading** (the simulated account) if you
+   want to trade the demo account; otherwise use your mainnet account.
+2. Inside that account, create an **API key** with **read + trade** (Unified
+   Trading) permissions.
+3. Copy the key and secret into `config.json` and set `mode: "live"`.
+
+> A Demo-Trading key ONLY works against `https://api-demo.bybit.com`
+> (`api.demo = true`). Demo Trading is a *separate account with its own user
+> ID* — see the Troubleshooting section for the `10003` error.
 
 ---
 
@@ -100,10 +132,19 @@ There is nothing to `pip install`.
 
 ```jsonc
 {
+  "mode": "paper",                        // "paper" = built-in standalone demo, "live" = real orders
+  "paper": {
+    "starting_balance": 100000,           // simulated wallet (in balance_currency)
+    "balance_currency": "PHP",            // "PHP" or "USDT"
+    "taker_fee_pct": 0.055,               // simulated taker fee per fill
+    "state_file": "paper_state.json",     // persists wallet + positions
+    "reset_on_start": false               // true = wipe back to starting_balance
+  },
   "api": {
-    "api_key": "YOUR_DEMO_API_KEY",      // <-- edit
-    "api_secret": "YOUR_DEMO_API_SECRET",// <-- edit
-    "demo": true,                         // true = api-demo.bybit.com
+    "api_key": "YOUR_DEMO_API_KEY",       // only needed in "live" mode
+    "api_secret": "YOUR_DEMO_API_SECRET", // only needed in "live" mode
+    "demo": true,                         // live mode: true=api-demo.bybit.com
+    "testnet": false,
     "recv_window": 20000                  // keeps requests valid (anti clock-skew)
   },
   "trade": {
@@ -112,7 +153,7 @@ There is nothing to `pip install`.
     "quote_coin": "USDT",                 // only scan pairs quoted in this coin
     "timeframe": "5",                     // 1,3,5,15,30,60,120,240,360,720,D,W,M
     "leverage_pct": 75,                   // % of EACH pair's MAX leverage
-    "position_size_pct": 85,              // 85% of wallet per position
+    "position_size_pct": 85,              // 85% of wallet per position (editable)
     "max_open_positions": 1,              // current open positions allowed (global)
     "max_fvg_chain": 3,                   // chain up to 3 consecutive FVGs
     "fvg_threshold_pct": 0.0,             // min gap size %
@@ -128,8 +169,8 @@ There is nothing to `pip install`.
     "settle_coin": "USDT",
     "usdt_to_php_rate": 58.0              // update to current rate
   },
-  "demo_funds": {
-    "auto_request": true,                 // auto top-up demo wallet
+  "demo_funds": {                          // live demo-account top-up (live mode only)
+    "auto_request": true,
     "coin": "USDT",
     "amount": "100000",
     "min_balance_threshold": 10000
@@ -144,11 +185,12 @@ There is nothing to `pip install`.
 }
 ```
 
-Everything you asked to be editable lives here: **API key/secret**, **stop
-loss & take profit (by ROI)**, **current open positions** (`max_open_positions`),
-the **timeframe to trade from**, and the **leverage percentage**
-(`leverage_pct`). Set `symbols` to `"ALL"` to scan every USDT perpetual, or a
-list to restrict it.
+Everything you asked to be editable lives here: **trading mode**, **API
+key/secret**, **stop loss & take profit (by ROI)**, **current open positions**
+(`max_open_positions`), the **timeframe to trade from**, the **leverage
+percentage** (`leverage_pct`), and the **position size** (`position_size_pct`,
+default 85%). Set `symbols` to `"ALL"` to scan every USDT perpetual, or a list
+to restrict it.
 
 ### How scanning all pairs works (rate-friendly)
 - Live prices come from **one** `tickers` call per tick (covers all symbols).
@@ -248,12 +290,14 @@ included, or every signed call will fail.
 
 | File              | Purpose                                                  |
 |-------------------|----------------------------------------------------------|
-| `bot.py`          | Main loop: validate keys, poll, detect, enter, report.   |
+| `bot.py`          | Main loop: poll, detect, enter, report (paper or live).  |
+| `broker.py`       | PaperBroker (standalone demo) + LiveBroker (real orders).|
 | `bybit_client.py` | Pure-stdlib Bybit V5 REST client (signing, retries).     |
 | `fvg.py`          | LuxAlgo Fair Value Gap detection, ported to Python.      |
 | `strategy.py`     | Retrace-to-mid entries, chaining, ROI SL/TP, sizing.     |
 | `config.json`     | All user-editable settings.                              |
 | `check_api.py`    | Diagnose which Bybit environment your API key belongs to.|
+| `paper_state.json`| Auto-saved demo wallet/positions (created at runtime).   |
 | `LICENSE`         | CC BY-NC-SA 4.0 + credit to LuxAlgo.                      |
 
 ---

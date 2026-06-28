@@ -12,6 +12,13 @@ It scans ALL USDT perpetual pairs (configurable), detects Fair Value Gaps
 on the chosen timeframe, and enters on a retrace to the FVG mid. Leverage is
 set per pair as a PERCENT of that pair's maximum leverage.
 
+Two modes (config.json -> "mode"):
+  * "paper" - a STANDALONE built-in demo. The bot keeps its own simulated
+              wallet/positions and fills TP/SL locally against live public
+              prices. No Bybit account or API keys required.
+  * "live"  - sends real orders to Bybit (mainnet or demo account) and needs
+              valid API keys.
+
 Usage:
     python3 bot.py                 # uses ./config.json
     python3 bot.py my_config.json  # custom config path
@@ -25,6 +32,7 @@ import sys
 import time
 
 from bybit_client import BybitClient, BybitError
+from broker import make_broker
 from strategy import FVGStrategy
 
 
@@ -62,16 +70,21 @@ class Bot:
         self.kline_limit = int(eng.get("kline_limit", 60))
         self.scan_batch = int(eng.get("scan_batch", 30))
         self.dry_run = bool(eng.get("dry_run", False))
+        self.mode = str(self.cfg.get("mode", "paper")).lower()
 
         api = self.cfg["api"]
+        # The client is used for PUBLIC market data (klines/tickers/instruments)
+        # in every mode. In paper mode it never makes authenticated calls.
         self.client = BybitClient(
-            api_key=api["api_key"],
-            api_secret=api["api_secret"],
+            api_key=api.get("api_key", ""),
+            api_secret=api.get("api_secret", ""),
             demo=api.get("demo", True),
             testnet=api.get("testnet", False),
             recv_window=api.get("recv_window", 20000),
             logger=self.log,
         )
+
+        self.broker = make_broker(self.client, self.cfg, self.log)
 
         t = self.cfg["trade"]
         self.category = t["category"]
@@ -80,6 +93,7 @@ class Bot:
         self.symbols_cfg = t.get("symbols", "ALL")
         self.max_symbols = int(t.get("max_symbols", 0))
         self.max_open = int(t["max_open_positions"])
+        self.position_size_pct = float(t["position_size_pct"])
 
         cur = self.cfg["currency"]
         self.display_ccy = cur.get("display_currency", "PHP")
@@ -99,68 +113,6 @@ class Bot:
     def fmt_money(self, usdt_amount):
         return "%s %s" % (self.display_ccy,
                           format(self.to_display(usdt_amount), ",.2f"))
-
-    # ------------------------------------------------------------------ #
-    def validate_credentials(self):
-        api = self.cfg["api"]
-        if (not api["api_key"] or api["api_key"].startswith("YOUR_")
-                or not api["api_secret"]
-                or api["api_secret"].startswith("YOUR_")):
-            self.log.error(
-                "API key/secret not configured. Edit config.json -> api. "
-                "Create keys inside the Bybit DEMO trading account.")
-            return False
-        try:
-            self.client.sync_time(force=True)
-            wallet, avail = self.client.get_coin_balance(coin=self.settle_coin)
-            self.log.info(
-                "API key validated. Wallet=%s %.2f (%s) | Available=%s %.2f" %
-                (self.settle_coin, wallet, self.fmt_money(wallet),
-                 self.settle_coin, avail))
-            return True
-        except BybitError as exc:
-            host = self.client.host
-            if exc.ret_code == 10003:
-                self.log.error(
-                    "API key rejected (retCode 10003: %s). This almost always "
-                    "means the key does NOT belong to the environment the bot "
-                    "is calling (%s). Bybit has 4 separate envs: mainnet, "
-                    "mainnet-demo, testnet, testnet-demo - a key only works on "
-                    "the one it was created in." % (exc.ret_msg, host))
-                self.log.error(
-                    "Fix: create the key from INSIDE Demo Trading (separate "
-                    "account/user ID) and keep api.demo=true. Run "
-                    "`python3 check_api.py` to see which env your key matches.")
-            elif exc.ret_code == 10004:
-                self.log.error(
-                    "Signature error (retCode 10004): wrong api_secret or a "
-                    "large device clock skew. Re-copy the secret; the bot "
-                    "auto-syncs time. Run `python3 check_api.py` to diagnose.")
-            elif exc.ret_code in (10005, 33004):
-                self.log.error(
-                    "API key problem (retCode %s: %s): key may lack trade "
-                    "permission or be expired." %
-                    (exc.ret_code, exc.ret_msg))
-            else:
-                self.log.error("Validation call failed: %s" % exc)
-            return False
-
-    def ensure_demo_funds(self):
-        df = self.cfg.get("demo_funds", {})
-        if not (self.cfg["api"].get("demo", True) and df.get("auto_request")):
-            return
-        try:
-            wallet, _ = self.client.get_coin_balance(
-                coin=df.get("coin", "USDT"))
-            if wallet < float(df.get("min_balance_threshold", 10000)):
-                self.log.info("Demo balance low (%.2f); requesting funds..."
-                              % wallet)
-                self.client.request_demo_funds(
-                    coin=df.get("coin", "USDT"),
-                    amount=df.get("amount", "100000"))
-                self.log.info("Demo funds requested.")
-        except BybitError as exc:
-            self.log.warning("Could not top up demo funds: %s" % exc)
 
     # ------------------------------------------------------------------ #
     def discover_symbols(self):
@@ -207,35 +159,6 @@ class Bot:
         return ", ".join(out) if out else "n/a"
 
     # ------------------------------------------------------------------ #
-    def open_positions_map(self):
-        """Return {symbol: position_dict} for all open positions (1 call)."""
-        try:
-            positions = self.client.get_open_positions(
-                self.category, settle_coin=self.settle_coin)
-        except BybitError as exc:
-            self.log.warning("positions fetch failed: %s" % exc)
-            return {}
-        return {p.get("symbol"): p for p in positions}
-
-    def get_balance(self):
-        wallet, avail = self.client.get_coin_balance(coin=self.settle_coin)
-        return avail if avail > 0 else wallet
-
-    def ensure_leverage(self, strat):
-        if strat.leverage_set:
-            return
-        try:
-            self.client.set_leverage(self.category, strat.symbol,
-                                     strat.leverage_str())
-            strat.leverage_set = True
-            self.log.info("[%s] leverage set to %sx (max %s)" %
-                          (strat.symbol, strat.leverage_str(),
-                           format(strat.max_leverage.normalize(), "f")))
-        except BybitError as exc:
-            self.log.warning("[%s] could not set leverage: %s" %
-                             (strat.symbol, exc))
-
-    # ------------------------------------------------------------------ #
     def scan_klines_batch(self):
         """Refresh klines + detect FVGs for the next batch of symbols."""
         if not self.scan_order:
@@ -280,7 +203,7 @@ class Bot:
 
             if balance is None:
                 try:
-                    balance = self.get_balance()
+                    balance = self.broker.get_balance()
                 except BybitError as exc:
                     self.log.warning("balance fetch failed: %s" % exc)
                     return
@@ -288,6 +211,7 @@ class Bot:
                 self.log.warning("Balance is zero; cannot open positions.")
                 return
 
+            # Size = position_size_pct (85%) of the whole wallet balance.
             spec = strat.prepare_entry(balance, price)
             if spec is None:
                 self.log.debug("[%s] qty below minimum; skip" % symbol)
@@ -297,39 +221,33 @@ class Bot:
             if self.dry_run:
                 self.log.info(
                     "[DRY RUN][%s] would %s qty=%s @~%.6f TP=%s SL=%s "
-                    "lev=%sx chain=%d" %
+                    "lev=%sx chain=%d (size=%.0f%% of %s)" %
                     (symbol, spec["side"], spec["qty"], spec["entry"],
-                     spec["tp"], spec["sl"], spec["leverage"], spec["chain"]))
+                     spec["tp"], spec["sl"], spec["leverage"], spec["chain"],
+                     self.position_size_pct, self.fmt_money(balance)))
                 strat.mark_entered()
                 open_count += 1
                 continue
 
-            self.ensure_leverage(strat)
-            try:
-                resp = self.client.place_market_order(
-                    self.category, symbol, spec["side"], spec["qty"],
-                    take_profit=spec["tp"], stop_loss=spec["sl"],
-                    position_idx=0)
-                oid = resp.get("result", {}).get("orderId")
-                self.log.info(
-                    "OPENED [%s] %s qty=%s @~%.6f TP=%s SL=%s lev=%sx "
-                    "chain=%d id=%s" %
-                    (symbol, spec["direction"].upper(), spec["qty"],
-                     spec["entry"], spec["tp"], spec["sl"], spec["leverage"],
-                     spec["chain"], oid))
+            self.broker.ensure_leverage(strat)
+            if self.broker.open_position(spec):
                 strat.mark_entered()
                 open_count += 1
-                balance = None  # force refresh next entry
-            except BybitError as exc:
-                self.log.error("[%s] order failed: %s" % (symbol, exc))
+                balance = None  # force refresh for the next entry
+            else:
                 strat.mark_entered()
 
     # ------------------------------------------------------------------ #
     def report_status(self, open_map):
-        if not open_map:
-            self.log.info("No open positions. Tracking %d symbols." %
-                          len(self.scan_order))
-            return
+        try:
+            equity = self.broker.get_equity()
+            balance = self.broker.get_balance()
+            self.log.info("Wallet: equity=%s | free=%s | open=%d | "
+                          "tracking=%d symbols" %
+                          (self.fmt_money(equity), self.fmt_money(balance),
+                           len(open_map), len(self.scan_order)))
+        except BybitError as exc:
+            self.log.warning("balance/equity fetch failed: %s" % exc)
         for symbol, p in open_map.items():
             pnl = float(p.get("unrealisedPnl", 0) or 0)
             self.log.info(
@@ -351,22 +269,23 @@ class Bot:
     # ------------------------------------------------------------------ #
     def run_once(self, report=False):
         prices = self.price_map()
-        open_map = self.open_positions_map()
+        self.broker.on_tick(prices)          # paper: fill TP/SL locally
+        open_map = self.broker.open_positions_map()
         self.scan_klines_batch()
         self.check_entries(prices, open_map)
         if report:
             self.report_status(open_map)
-            self.ensure_demo_funds()
+            self.broker.ensure_funds()
 
     def run(self):
         self.log.info("=" * 60)
-        self.log.info("BybitbotFVG starting | host=%s | tf=%s" %
-                      (self.client.host, self.timeframe))
+        self.log.info("BybitbotFVG starting | mode=%s | broker=%s | tf=%s" %
+                      (self.mode.upper(), self.broker.name(), self.timeframe))
         self.log.info("SL=%s%% ROI  TP=%s%% ROI  size=%s%% of wallet  "
                       "leverage=%s%% of each pair's max" %
                       (self.cfg["risk"]["stop_loss_roi_pct"],
                        self.cfg["risk"]["take_profit_roi_pct"],
-                       self.cfg["trade"]["position_size_pct"],
+                       self.position_size_pct,
                        self.cfg["trade"]["leverage_pct"]))
         self.log.info("Max open positions: %d | Display currency: %s "
                       "(1 %s = %.4f %s)" %
@@ -374,11 +293,11 @@ class Bot:
                        self.fx, self.display_ccy))
         self.log.info("=" * 60)
 
-        if not self.validate_credentials():
-            self.log.error("Exiting due to credential error.")
+        if not self.broker.validate():
+            self.log.error("Exiting: broker validation failed.")
             return
 
-        self.ensure_demo_funds()
+        self.broker.ensure_funds()
         try:
             self.discover_symbols()
         except BybitError as exc:
