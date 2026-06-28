@@ -110,21 +110,34 @@ There is nothing to `pip install`.
 
 ---
 
-## Get your Bybit API keys (LIVE mode only)
+## API keys: which ones do I need?
 
-> **Skip this entirely if you use the default `mode: "paper"`** — the
-> standalone demo needs no keys.
+There are **three** possible places trades can go, and each needs different
+credentials (or none):
 
-For `mode: "live"`:
-1. Log in to Bybit and open **Demo Trading** (the simulated account) if you
-   want to trade the demo account; otherwise use your mainnet account.
-2. Inside that account, create an **API key** with **read + trade** (Unified
-   Trading) permissions.
-3. Copy the key and secret into `config.json` and set `mode: "live"`.
+| You want to... | `mode` | `api.live_environment` | API keys needed |
+|----------------|--------|------------------------|-----------------|
+| Practice risk-free inside the bot | `paper` (or `--demo`) | (ignored) | **None** |
+| Trade Bybit's **demo** account via API | `live` (or `--live`) | `demo` | `demo_api_key` / `demo_api_secret` |
+| Trade **real money** on Bybit | `live` (or `--live`) | `mainnet` | `mainnet_api_key` / `mainnet_api_secret` |
 
-> A Demo-Trading key ONLY works against `https://api-demo.bybit.com`
-> (`api.demo = true`). Demo Trading is a *separate account with its own user
-> ID* — see the Troubleshooting section for the `10003` error.
+So the config has **separate slots** — a demo key and a live (mainnet) key —
+and `live_environment` chooses which one LIVE mode uses. They never get mixed
+up. (Legacy flat `api_key`/`api_secret` still works if you used the old
+config.)
+
+> The built-in **paper** demo (`--demo`) uses only public market data, so it
+> needs **no keys at all** — that is why the bot can run before you set any.
+
+**Creating the keys**
+- **Demo account key:** log in to Bybit → switch to **Demo Trading** (a
+  *separate account with its own user ID*) → create an API key there. It only
+  works on `https://api-demo.bybit.com`.
+- **Live (mainnet) key:** create it on your normal Bybit account with
+  **Unified Trading + trade** permission.
+
+Run `python3 check_api.py` to test every key you configured and see which
+environment each one belongs to (handy for the `10003` error).
 
 ---
 
@@ -141,11 +154,14 @@ For `mode: "live"`:
     "reset_on_start": false               // true = wipe back to starting_balance
   },
   "api": {
-    "api_key": "YOUR_DEMO_API_KEY",       // only needed in "live" mode
-    "api_secret": "YOUR_DEMO_API_SECRET", // only needed in "live" mode
-    "demo": true,                         // live mode: true=api-demo.bybit.com
-    "testnet": false,
-    "recv_window": 20000                  // keeps requests valid (anti clock-skew)
+    "live_environment": "demo",             // LIVE mode trades on: "demo" | "mainnet" | "testnet"
+    "recv_window": 20000,                   // keeps requests valid (anti clock-skew)
+    "demo_api_key": "YOUR_BYBIT_DEMO_API_KEY",      // key from the Bybit Demo account
+    "demo_api_secret": "YOUR_BYBIT_DEMO_API_SECRET",
+    "mainnet_api_key": "YOUR_BYBIT_LIVE_API_KEY",   // key from your REAL mainnet account
+    "mainnet_api_secret": "YOUR_BYBIT_LIVE_API_SECRET",
+    "testnet_api_key": "",
+    "testnet_api_secret": ""
   },
   "trade": {
     "category": "linear",                 // USDT perpetuals

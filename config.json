@@ -8,11 +8,14 @@
     "reset_on_start": false
   },
   "api": {
-    "api_key": "YOUR_DEMO_API_KEY",
-    "api_secret": "YOUR_DEMO_API_SECRET",
-    "demo": true,
-    "testnet": false,
-    "recv_window": 20000
+    "live_environment": "demo",
+    "recv_window": 20000,
+    "demo_api_key": "YOUR_BYBIT_DEMO_API_KEY",
+    "demo_api_secret": "YOUR_BYBIT_DEMO_API_SECRET",
+    "mainnet_api_key": "YOUR_BYBIT_LIVE_API_KEY",
+    "mainnet_api_secret": "YOUR_BYBIT_LIVE_API_SECRET",
+    "testnet_api_key": "",
+    "testnet_api_secret": ""
   },
   "trade": {
     "category": "linear",

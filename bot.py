@@ -31,7 +31,7 @@ import signal
 import sys
 import time
 
-from bybit_client import BybitClient, BybitError
+from bybit_client import BybitClient, BybitError, resolve_api
 from broker import make_broker
 from strategy import FVGStrategy
 
@@ -77,14 +77,16 @@ class Bot:
         self.mode = str(self.cfg.get("mode", "paper")).lower()
 
         api = self.cfg["api"]
+        # Resolve which credentials + Bybit environment LIVE mode uses.
+        self.api = resolve_api(self.cfg)
         # The client is used for PUBLIC market data (klines/tickers/instruments)
         # in every mode. In paper mode it never makes authenticated calls.
         self.client = BybitClient(
-            api_key=api.get("api_key", ""),
-            api_secret=api.get("api_secret", ""),
-            demo=api.get("demo", True),
-            testnet=api.get("testnet", False),
-            recv_window=api.get("recv_window", 20000),
+            api_key=self.api["api_key"],
+            api_secret=self.api["api_secret"],
+            demo=self.api["demo"],
+            testnet=self.api["testnet"],
+            recv_window=self.api["recv_window"],
             logger=self.log,
         )
 
@@ -406,9 +408,9 @@ def confirm_live(config, assume_yes):
     """Require an explicit confirmation before trading real money."""
     if assume_yes:
         return True
-    is_demo_account = bool(config.get("api", {}).get("demo", True))
-    if is_demo_account:
-        # Live mode but pointed at the Bybit DEMO account - not real money.
+    env = resolve_api(config)["env"]
+    if env != "mainnet":
+        # Live mode but on the Bybit DEMO/TESTNET account - not real money.
         return True
     if not sys.stdin.isatty():
         # Non-interactive (e.g. nohup) + real mainnet: refuse unless --yes.

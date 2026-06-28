@@ -34,7 +34,7 @@ import json
 import os
 import time
 
-from bybit_client import BybitError
+from bybit_client import BybitError, resolve_api
 
 
 # ---------------------------------------------------------------------------
@@ -47,18 +47,21 @@ class LiveBroker:
         self.log = logger
         self.category = config["trade"]["category"]
         self.settle_coin = config["currency"]["settle_coin"]
+        self.api = resolve_api(config)
 
     def name(self):
-        return "LIVE (%s)" % self.client.host
+        return "LIVE (%s, env=%s)" % (self.client.host, self.api["env"])
 
     def validate(self):
-        api = self.cfg["api"]
-        if (not api["api_key"] or api["api_key"].startswith("YOUR_")
-                or not api["api_secret"]
-                or api["api_secret"].startswith("YOUR_")):
+        key = self.api["api_key"]
+        sec = self.api["api_secret"]
+        if (not key or key.startswith("YOUR_") or not sec
+                or sec.startswith("YOUR_")):
             self.log.error(
-                "LIVE mode needs API keys. Edit config.json -> api, or set "
-                "mode=paper to use the built-in standalone demo.")
+                "LIVE mode (env=%s) needs API keys. Edit config.json -> api "
+                "(%s_api_key / %s_api_secret), or run with --demo to use the "
+                "built-in standalone demo." %
+                (self.api["env"], self.api["env"], self.api["env"]))
             return False
         try:
             self.client.sync_time(force=True)
@@ -84,7 +87,7 @@ class LiveBroker:
 
     def ensure_funds(self):
         df = self.cfg.get("demo_funds", {})
-        if not (self.cfg["api"].get("demo", True) and df.get("auto_request")):
+        if not (self.api["env"] == "demo" and df.get("auto_request")):
             return
         try:
             wallet, _ = self.client.get_coin_balance(
