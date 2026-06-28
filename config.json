@@ -1,0 +1,40 @@
+{
+  "api": {
+    "api_key": "YOUR_DEMO_API_KEY",
+    "api_secret": "YOUR_DEMO_API_SECRET",
+    "demo": true,
+    "recv_window": 20000
+  },
+  "trade": {
+    "category": "linear",
+    "symbol": "BTCUSDT",
+    "timeframe": "5",
+    "leverage": 10,
+    "position_size_pct": 85,
+    "max_open_positions": 1,
+    "max_fvg_chain": 3,
+    "fvg_threshold_pct": 0.0,
+    "auto_threshold": false
+  },
+  "risk": {
+    "stop_loss_roi_pct": 30,
+    "take_profit_roi_pct": 350
+  },
+  "currency": {
+    "display_currency": "PHP",
+    "settle_coin": "USDT",
+    "usdt_to_php_rate": 58.0
+  },
+  "demo_funds": {
+    "auto_request": true,
+    "coin": "USDT",
+    "amount": "100000",
+    "min_balance_threshold": 10000
+  },
+  "engine": {
+    "poll_seconds": 5,
+    "kline_limit": 200,
+    "log_file": "bot.log",
+    "dry_run": false
+  }
+}
