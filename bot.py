@@ -229,13 +229,15 @@ class Bot:
                 strat.mark_entered()
 
     # ------------------------------------------------------------------ #
-    def report_status(self, open_map):
+    def report_status(self, open_map, prices):
+        armed = [(sym, s) for sym, s in self.strategies.items()
+                 if s.has_pending()]
         try:
             equity = self.broker.get_equity()
             balance = self.broker.get_balance()
-            self.log.info("Wallet: equity %s, free %s. Open %d." %
+            self.log.info("Equity %s. Free %s. Open %d. Waiting %d." %
                           (self.fmt_money(equity), self.fmt_money(balance),
-                           len(open_map)))
+                           len(open_map), len(armed)))
         except BybitError as exc:
             self.log.warning("Wallet fetch failed.")
         for symbol, p in open_map.items():
@@ -243,6 +245,13 @@ class Bot:
             self.log.info("%s %s %s @ %s. PnL %s." %
                           (symbol, p.get("side"), p.get("size"),
                            p.get("avgPrice"), self.fmt_money(pnl)))
+        # Show a few setups that are armed and waiting for the retrace.
+        for symbol, s in armed[:3]:
+            px = prices.get(symbol)
+            px_txt = ("%.6f" % px) if px is not None else "?"
+            self.log.info("Waiting: %s %s. Entry %.6f. Now %s." %
+                          (symbol, s.pending["direction"], s.pending["mid"],
+                           px_txt))
 
     def price_map(self):
         out = {}
@@ -263,7 +272,8 @@ class Bot:
         self.scan_klines_batch()
         self.check_entries(prices, open_map)
         if report:
-            self.report_status(open_map)
+            # Re-fetch so a position opened this tick shows immediately.
+            self.report_status(self.broker.open_positions_map(), prices)
             self.broker.ensure_funds()
 
     def run(self):
@@ -278,6 +288,9 @@ class Bot:
                        self.cfg["trade"]["leverage_pct"]))
         self.log.info("Max open: %d. Currency: %s." %
                       (self.max_open, self.display_ccy))
+        if self.mode != "live":
+            self.log.info("DEMO: trades are simulated inside the bot, NOT on "
+                          "Bybit. Watch OPENED/CLOSED logs and the state file.")
 
         if not self.broker.validate():
             self.log.error("Startup failed.")
