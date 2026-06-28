@@ -50,56 +50,34 @@ class LiveBroker:
         self.api = resolve_api(config)
 
     def name(self):
-        return "LIVE (%s, env=%s)" % (self.client.host, self.api["env"])
+        return "LIVE (Bybit, real money)"
 
     def validate(self):
         key = self.api["api_key"]
         sec = self.api["api_secret"]
         if (not key or key.startswith("YOUR_") or not sec
                 or sec.startswith("YOUR_")):
-            self.log.error(
-                "LIVE mode (env=%s) needs API keys. Edit config.json -> api "
-                "(%s_api_key / %s_api_secret), or run with --demo to use the "
-                "built-in standalone demo." %
-                (self.api["env"], self.api["env"], self.api["env"]))
+            self.log.error("LIVE mode needs API keys. Set api.api_key in "
+                           "config, or run with --demo.")
             return False
         try:
             self.client.sync_time(force=True)
             wallet, avail = self.client.get_coin_balance(coin=self.settle_coin)
-            self.log.info("API key validated. Wallet=%.2f %s | Available=%.2f"
-                          % (wallet, self.settle_coin, avail))
+            self.log.info("API key OK. Wallet %.2f %s." %
+                          (wallet, self.settle_coin))
             return True
         except BybitError as exc:
-            host = self.client.host
             if exc.ret_code == 10003:
-                self.log.error(
-                    "API key rejected (10003: %s). The key does not belong to "
-                    "this environment (%s). Bybit has mainnet, mainnet-demo, "
-                    "testnet, testnet-demo - a key only works on the one it "
-                    "was created in. Run `python3 check_api.py`." %
-                    (exc.ret_msg, host))
+                self.log.error("API key invalid (10003). Run check_api.py.")
             elif exc.ret_code == 10004:
-                self.log.error("Signature error (10004): wrong api_secret or "
-                               "clock skew. Run `python3 check_api.py`.")
+                self.log.error("Bad signature (10004). Check api_secret.")
             else:
                 self.log.error("Validation failed: %s" % exc)
             return False
 
     def ensure_funds(self):
-        df = self.cfg.get("demo_funds", {})
-        if not (self.api["env"] == "demo" and df.get("auto_request")):
-            return
-        try:
-            wallet, _ = self.client.get_coin_balance(
-                coin=df.get("coin", "USDT"))
-            if wallet < float(df.get("min_balance_threshold", 10000)):
-                self.log.info("Demo balance low (%.2f); requesting funds..."
-                              % wallet)
-                self.client.request_demo_funds(
-                    coin=df.get("coin", "USDT"),
-                    amount=df.get("amount", "100000"))
-        except BybitError as exc:
-            self.log.warning("Could not top up demo funds: %s" % exc)
+        # Real account; nothing to top up.
+        return
 
     def get_balance(self):
         wallet, avail = self.client.get_coin_balance(coin=self.settle_coin)
@@ -114,7 +92,7 @@ class LiveBroker:
             positions = self.client.get_open_positions(
                 self.category, settle_coin=self.settle_coin)
         except BybitError as exc:
-            self.log.warning("positions fetch failed: %s" % exc)
+            self.log.warning("Positions fetch failed.")
             return {}
         return {p.get("symbol"): p for p in positions}
 
@@ -125,27 +103,23 @@ class LiveBroker:
             self.client.set_leverage(self.category, strat.symbol,
                                      strat.leverage_str())
             strat.leverage_set = True
-            self.log.info("[%s] leverage set to %sx" %
+            self.log.info("[%s] Leverage set %sx." %
                           (strat.symbol, strat.leverage_str()))
         except BybitError as exc:
-            self.log.warning("[%s] could not set leverage: %s" %
-                             (strat.symbol, exc))
+            self.log.warning("[%s] Leverage set failed." % strat.symbol)
 
     def open_position(self, spec):
         try:
-            resp = self.client.place_market_order(
+            self.client.place_market_order(
                 self.category, spec["symbol"], spec["side"], spec["qty"],
                 take_profit=spec["tp"], stop_loss=spec["sl"], position_idx=0)
-            oid = resp.get("result", {}).get("orderId")
-            self.log.info(
-                "OPENED [%s] %s qty=%s @~%.6f TP=%s SL=%s lev=%sx chain=%d "
-                "id=%s" %
-                (spec["symbol"], spec["direction"].upper(), spec["qty"],
-                 spec["entry"], spec["tp"], spec["sl"], spec["leverage"],
-                 spec["chain"], oid))
+            self.log.info("OPENED %s %s %s @ %.6f. TP %s. SL %s." %
+                          (spec["direction"].upper(), spec["symbol"],
+                           spec["qty"], spec["entry"], spec["tp"],
+                           spec["sl"]))
             return True
         except BybitError as exc:
-            self.log.error("[%s] order failed: %s" % (spec["symbol"], exc))
+            self.log.error("[%s] Order failed: %s" % (spec["symbol"], exc))
             return False
 
     def on_tick(self, price_map):
@@ -172,12 +146,8 @@ class PaperBroker:
         bal_ccy = str(p.get("balance_currency", self.settle_coin)).upper()
         if bal_ccy in (self.display_ccy.upper(), "PHP"):
             self.start_usdt = start / self.fx
-            self._start_label = "%s %s (= %.2f %s)" % (
-                self.display_ccy, format(start, ",.2f"),
-                self.start_usdt, self.settle_coin)
         else:
             self.start_usdt = start
-            self._start_label = "%.2f %s" % (start, self.settle_coin)
 
         # Internal state (all in settle coin / USDT).
         self.cash = self.start_usdt          # free balance
@@ -204,11 +174,10 @@ class PaperBroker:
             self.losses = int(st.get("losses", 0))
             self.positions = st.get("positions", {})
             self._seq = int(st.get("seq", 0))
-            self.log.info("Loaded paper state: cash=%.2f %s, %d open position(s)"
-                          % (self.cash, self.settle_coin, len(self.positions)))
+            self.log.info("Loaded demo wallet. Cash %.2f %s. Open %d." %
+                          (self.cash, self.settle_coin, len(self.positions)))
         except Exception as exc:  # noqa: BLE001
-            self.log.warning("Could not load paper state (%s); starting fresh."
-                             % exc)
+            self.log.warning("Demo state load failed. Starting fresh.")
             self.cash = self.start_usdt
 
     def _save(self):
@@ -227,7 +196,7 @@ class PaperBroker:
                 json.dump(st, fh, indent=2)
             os.replace(tmp, self.state_file)
         except Exception as exc:  # noqa: BLE001
-            self.log.warning("Could not save paper state: %s" % exc)
+            self.log.warning("Demo state save failed.")
 
     # -- display helpers ------------------------------------------------- #
     def _php(self, usdt):
@@ -238,20 +207,17 @@ class PaperBroker:
 
     # -- interface ------------------------------------------------------- #
     def name(self):
-        return "PAPER (standalone built-in demo)"
+        return "DEMO (built-in, live charts)"
 
     def validate(self):
-        self.log.info("Standalone demo wallet ready. Starting balance: %s"
-                      % self._start_label)
-        self.log.info("Current cash: %.2f %s (%s)" %
-                      (self.cash, self.settle_coin, self._php(self.cash)))
+        self.log.info("Demo wallet ready. Cash %s." % self._php(self.cash))
         return True
 
     def ensure_funds(self):
         # If the simulated account is wiped out and nothing is open, refill it
         # so the demo keeps running.
         if not self.positions and self.cash <= 0:
-            self.log.info("Paper wallet empty; refilling to starting balance.")
+            self.log.info("Demo wallet empty. Refilled.")
             self.cash = self.start_usdt
             self._save()
 
@@ -303,9 +269,7 @@ class PaperBroker:
         fee = notional * self.fee_pct / 100.0
 
         if margin + fee > self.cash:
-            self.log.warning("[%s] not enough paper balance (need %.2f, have "
-                             "%.2f); skipping." %
-                             (symbol, margin + fee, self.cash))
+            self.log.warning("[%s] Not enough balance. Skipped." % symbol)
             return False
 
         self.cash -= (margin + fee)
@@ -323,12 +287,9 @@ class PaperBroker:
             "open_time": int(time.time()),
         }
         self.marks[symbol] = entry
-        self.log.info(
-            "OPENED [%s] %s qty=%s @~%.6f TP=%s SL=%s lev=%sx chain=%d "
-            "(margin=%s, fee=%.4f %s) | free=%s" %
-            (symbol, spec["direction"].upper(), spec["qty"], entry,
-             spec["tp"], spec["sl"], spec["leverage"], spec["chain"],
-             self._php(margin), fee, self.settle_coin, self._php(self.cash)))
+        self.log.info("OPENED %s %s %s @ %.6f. TP %s. SL %s. Free %s." %
+                      (spec["direction"].upper(), symbol, spec["qty"], entry,
+                       spec["tp"], spec["sl"], self._php(self.cash)))
         self._save()
         return True
 
@@ -343,12 +304,9 @@ class PaperBroker:
             self.wins += 1
         else:
             self.losses += 1
-        self.log.info(
-            "CLOSED [%s] %s @ %.6f (%s) | PnL=%s | realised=%s | free=%s | "
-            "equity=%s" %
-            (symbol, p["side"], exit_price, reason, self._php(pnl),
-             self._php(self.realized), self._php(self.cash),
-             self._php(self.get_equity())))
+        self.log.info("CLOSED %s %s @ %.6f (%s). PnL %s. Equity %s." %
+                      (p["side"], symbol, exit_price, reason,
+                       self._php(pnl), self._php(self.get_equity())))
         self.marks.pop(symbol, None)
         self._save()
 

@@ -26,56 +26,20 @@ TESTNET_HOST = "https://api-testnet.bybit.com"
 
 
 def resolve_api(cfg):
-    """Resolve which API credentials + environment LIVE mode should use.
+    """Resolve the Bybit API credentials for LIVE trading.
 
-    The config has separate slots so LIVE and DEMO-account keys never get
-    mixed up:
+    There are only two modes:
+      * paper (built-in demo) - needs NO keys, uses live public charts.
+      * live  - real orders on Bybit using these keys (mainnet).
 
-        "api": {
-            "live_environment": "demo",        # "demo" | "mainnet" | "testnet"
-            "demo_api_key": "...",   "demo_api_secret": "...",
-            "mainnet_api_key": "...","mainnet_api_secret": "...",
-            "testnet_api_key": "..." ,"testnet_api_secret": "..."
-        }
-
-    `live_environment` decides which pair is used and which Bybit host orders
-    go to. Legacy flat keys (`api_key`/`api_secret`/`demo`) are still honored.
-
-    Returns a dict: env, api_key, api_secret, demo, testnet, recv_window.
+    Returns a dict: api_key, api_secret, demo, testnet, recv_window.
     """
     api = cfg.get("api", {}) or {}
-
-    # Default env: respect a legacy `demo` flag if present, else "demo".
-    default_env = "demo"
-    if api.get("demo") is False:
-        default_env = "mainnet"
-    elif api.get("testnet") is True:
-        default_env = "testnet"
-    env = str(api.get("live_environment", default_env)).lower()
-    if env not in ("demo", "mainnet", "testnet"):
-        env = "demo"
-
-    def pick(prefix):
-        key = api.get(prefix + "_api_key") or api.get("api_key") or ""
-        sec = api.get(prefix + "_api_secret") or api.get("api_secret") or ""
-        return key.strip(), sec.strip()
-
-    if env == "mainnet":
-        key, sec = pick("mainnet")
-        demo, testnet = False, False
-    elif env == "testnet":
-        key, sec = pick("testnet")
-        demo, testnet = False, True
-    else:
-        key, sec = pick("demo")
-        demo, testnet = True, False
-
     return {
-        "env": env,
-        "api_key": key,
-        "api_secret": sec,
-        "demo": demo,
-        "testnet": testnet,
+        "api_key": (api.get("api_key") or "").strip(),
+        "api_secret": (api.get("api_secret") or "").strip(),
+        "demo": False,
+        "testnet": False,
         "recv_window": api.get("recv_window", 20000),
     }
 

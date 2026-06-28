@@ -128,8 +128,8 @@ class Bot:
         else:
             wanted = None  # ALL
 
-        self.log.info("Discovering %s perpetual pairs (quote=%s)..." %
-                      ("selected" if wanted else "ALL", self.quote_coin))
+        self.log.info("Loading %s pairs." %
+                      ("selected" if wanted else "all USDT"))
         instruments = self.client.get_all_instruments(
             self.category, status="Trading", quote_coin=self.quote_coin,
             contract_type="LinearPerpetual")
@@ -149,20 +149,9 @@ class Bot:
                 break
 
         self.scan_order = list(self.strategies.keys())
-        self.log.info("Tracking %d symbols. Example leverage: %s" %
-                      (len(self.scan_order), self._leverage_sample()))
+        self.log.info("Tracking %d symbols." % len(self.scan_order))
         if not self.scan_order:
-            self.log.error("No symbols matched. Check trade.symbols / "
-                           "quote_coin in config.json.")
-
-    def _leverage_sample(self):
-        out = []
-        for sym in self.scan_order[:4]:
-            s = self.strategies[sym]
-            out.append("%s=%sx(max %s)" %
-                       (sym, s.leverage_str(),
-                        format(s.max_leverage.normalize(), "f")))
-        return ", ".join(out) if out else "n/a"
+            self.log.error("No symbols matched config.")
 
     # ------------------------------------------------------------------ #
     def scan_klines_batch(self):
@@ -186,7 +175,7 @@ class Bot:
                 closed = candles[:-1]  # drop in-progress candle
                 strat.update_fvgs(closed)
             except BybitError as exc:
-                self.log.debug("[%s] kline error: %s" % (symbol, exc))
+                self.log.debug("[%s] kline error." % symbol)
 
     def check_entries(self, price_map, open_map):
         """Trigger entries where price retraced to the FVG mid."""
@@ -203,34 +192,30 @@ class Bot:
             if not strat.retrace_reached(price):
                 continue
             if open_count >= self.max_open:
-                self.log.debug("Max open positions (%d) reached; holding %s"
-                               % (self.max_open, symbol))
+                self.log.debug("Max open positions reached.")
                 continue
 
             if balance is None:
                 try:
                     balance = self.broker.get_balance()
                 except BybitError as exc:
-                    self.log.warning("balance fetch failed: %s" % exc)
+                    self.log.warning("Balance fetch failed.")
                     return
             if balance <= 0:
-                self.log.warning("Balance is zero; cannot open positions.")
+                self.log.warning("Balance is zero.")
                 return
 
             # Size = position_size_pct (85%) of the whole wallet balance.
             spec = strat.prepare_entry(balance, price)
             if spec is None:
-                self.log.debug("[%s] qty below minimum; skip" % symbol)
+                self.log.debug("[%s] Qty below minimum." % symbol)
                 strat.mark_entered()
                 continue
 
             if self.dry_run:
-                self.log.info(
-                    "[DRY RUN][%s] would %s qty=%s @~%.6f TP=%s SL=%s "
-                    "lev=%sx chain=%d (size=%.0f%% of %s)" %
-                    (symbol, spec["side"], spec["qty"], spec["entry"],
-                     spec["tp"], spec["sl"], spec["leverage"], spec["chain"],
-                     self.position_size_pct, self.fmt_money(balance)))
+                self.log.info("[DRY][%s] Would %s %s @ %.6f. TP %s. SL %s." %
+                              (symbol, spec["side"], spec["qty"],
+                               spec["entry"], spec["tp"], spec["sl"]))
                 strat.mark_entered()
                 open_count += 1
                 continue
@@ -248,18 +233,16 @@ class Bot:
         try:
             equity = self.broker.get_equity()
             balance = self.broker.get_balance()
-            self.log.info("Wallet: equity=%s | free=%s | open=%d | "
-                          "tracking=%d symbols" %
+            self.log.info("Wallet: equity %s, free %s. Open %d." %
                           (self.fmt_money(equity), self.fmt_money(balance),
-                           len(open_map), len(self.scan_order)))
+                           len(open_map)))
         except BybitError as exc:
-            self.log.warning("balance/equity fetch failed: %s" % exc)
+            self.log.warning("Wallet fetch failed.")
         for symbol, p in open_map.items():
             pnl = float(p.get("unrealisedPnl", 0) or 0)
-            self.log.info(
-                "Position [%s]: %s %s @ %s | uPnL=%s | TP=%s SL=%s" %
-                (symbol, p.get("side"), p.get("size"), p.get("avgPrice"),
-                 self.fmt_money(pnl), p.get("takeProfit"), p.get("stopLoss")))
+            self.log.info("%s %s %s @ %s. PnL %s." %
+                          (symbol, p.get("side"), p.get("size"),
+                           p.get("avgPrice"), self.fmt_money(pnl)))
 
     def price_map(self):
         out = {}
@@ -269,7 +252,7 @@ class Bot:
                 if lp:
                     out[t.get("symbol")] = float(lp)
         except BybitError as exc:
-            self.log.warning("tickers fetch failed: %s" % exc)
+            self.log.warning("Price fetch failed.")
         return out
 
     # ------------------------------------------------------------------ #
@@ -284,38 +267,32 @@ class Bot:
             self.broker.ensure_funds()
 
     def run(self):
-        self.log.info("=" * 60)
-        self.log.info("BybitbotFVG starting | mode=%s | broker=%s | tf=%s" %
-                      (self.mode.upper(), self.broker.name(), self.timeframe))
-        self.log.info("SL=%s%% ROI  TP=%s%% ROI  size=%s%% of wallet  "
-                      "leverage=%s%% of each pair's max" %
+        self.log.info("BybitbotFVG started.")
+        self.log.info("Mode: %s. Timeframe: %s." %
+                      (self.mode.upper(), self.timeframe))
+        self.log.info("Risk: SL %s%% ROI, TP %s%% ROI." %
                       (self.cfg["risk"]["stop_loss_roi_pct"],
-                       self.cfg["risk"]["take_profit_roi_pct"],
-                       self.position_size_pct,
+                       self.cfg["risk"]["take_profit_roi_pct"]))
+        self.log.info("Size: %s%% of wallet. Leverage: %s%% of pair max." %
+                      (self.position_size_pct,
                        self.cfg["trade"]["leverage_pct"]))
-        self.log.info("Max open positions: %d | Display currency: %s "
-                      "(1 %s = %.4f %s)" %
-                      (self.max_open, self.display_ccy, self.settle_coin,
-                       self.fx, self.display_ccy))
-        self.log.info("=" * 60)
+        self.log.info("Max open: %d. Currency: %s." %
+                      (self.max_open, self.display_ccy))
 
         if not self.broker.validate():
-            self.log.error("Exiting: broker validation failed.")
+            self.log.error("Startup failed.")
             return
 
         self.broker.ensure_funds()
         try:
             self.discover_symbols()
         except BybitError as exc:
-            self.log.error("Could not discover symbols: %s" % exc)
+            self.log.error("Symbol load failed: %s" % exc)
             return
         if not self.scan_order:
             return
 
-        # Roughly one full kline cycle = (symbols/scan_batch)*poll seconds.
-        cycle = max(1, len(self.scan_order) / max(1, self.scan_batch)) * self.poll
-        self.log.info("Scanning ~%d symbols/tick; full scan every ~%.0fs."
-                      % (min(self.scan_batch, len(self.scan_order)), cycle))
+        self.log.info("Scanning every %ds." % int(self.poll))
 
         status_every = max(1, int(60 / self.poll))
         tick = 0
@@ -325,14 +302,14 @@ class Bot:
             except BybitError as exc:
                 self.log.error("API error: %s" % exc)
             except Exception as exc:  # noqa: BLE001
-                self.log.exception("Unexpected error: %s" % exc)
+                self.log.exception("Error: %s" % exc)
             tick += 1
             time.sleep(self.poll)
 
         self.log.info("Bot stopped.")
 
     def stop(self, *_):
-        self.log.info("Shutdown signal received; stopping...")
+        self.log.info("Stopping.")
         self._running = False
 
 
@@ -408,20 +385,13 @@ def confirm_live(config, assume_yes):
     """Require an explicit confirmation before trading real money."""
     if assume_yes:
         return True
-    env = resolve_api(config)["env"]
-    if env != "mainnet":
-        # Live mode but on the Bybit DEMO/TESTNET account - not real money.
-        return True
     if not sys.stdin.isatty():
-        # Non-interactive (e.g. nohup) + real mainnet: refuse unless --yes.
-        print("Refusing to start LIVE real-money trading non-interactively. "
-              "Re-run with --yes to confirm, or use --demo.")
+        print("Refusing to start LIVE trading non-interactively. "
+              "Use --yes to confirm, or --demo for the built-in demo.")
         return False
-    print("!" * 60)
-    print("WARNING: LIVE mode on the Bybit MAINNET account = REAL MONEY.")
-    print("!" * 60)
+    print("WARNING: LIVE mode places REAL orders on Bybit with real money.")
     try:
-        ans = input("Type YES (uppercase) to trade real funds: ").strip()
+        ans = input("Type YES to confirm: ").strip()
     except EOFError:
         ans = ""
     return ans == "YES"

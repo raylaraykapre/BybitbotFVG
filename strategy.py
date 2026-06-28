@@ -196,10 +196,8 @@ class FVGStrategy:
                     "last_time": fvg.start_time,
                     "chain": self.pending["chain"] + 1,
                 })
-                self.log.info(
-                    "[%s] Chained FVG #%d (%s) -> new entry mid=%.6f" %
-                    (self.symbol, self.pending["chain"], fvg.direction,
-                     fvg.mid))
+                self.log.info("[%s] Chained FVG #%d. Entry mid %.6f." %
+                              (self.symbol, self.pending["chain"], fvg.mid))
                 return fvg
 
         self.pending = {
@@ -211,9 +209,8 @@ class FVGStrategy:
             "chain": 1,
             "triggered": False,
         }
-        self.log.info(
-            "[%s] Armed %s FVG: top=%.6f bottom=%.6f mid=%.6f (await retrace)"
-            % (self.symbol, fvg.direction, fvg.top, fvg.bottom, fvg.mid))
+        self.log.info("[%s] Armed %s FVG. Entry mid %.6f." %
+                      (self.symbol, fvg.direction, fvg.mid))
         return fvg
 
     def _check_mitigation(self, candle):
@@ -222,12 +219,10 @@ class FVGStrategy:
         close = candle["close"]
         p = self.pending
         if p["direction"] == "long" and close < p["bottom"]:
-            self.log.info("[%s] Pending LONG FVG mitigated; dropped"
-                          % self.symbol)
+            self.log.info("[%s] Long setup invalidated." % self.symbol)
             self.pending = None
         elif p["direction"] == "short" and close > p["top"]:
-            self.log.info("[%s] Pending SHORT FVG mitigated; dropped"
-                          % self.symbol)
+            self.log.info("[%s] Short setup invalidated." % self.symbol)
             self.pending = None
 
     # ------------------------------------------------------------------ #

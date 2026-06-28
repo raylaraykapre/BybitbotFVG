@@ -8,14 +8,9 @@
     "reset_on_start": false
   },
   "api": {
-    "live_environment": "demo",
-    "recv_window": 20000,
-    "demo_api_key": "YOUR_BYBIT_DEMO_API_KEY",
-    "demo_api_secret": "YOUR_BYBIT_DEMO_API_SECRET",
-    "mainnet_api_key": "YOUR_BYBIT_LIVE_API_KEY",
-    "mainnet_api_secret": "YOUR_BYBIT_LIVE_API_SECRET",
-    "testnet_api_key": "",
-    "testnet_api_secret": ""
+    "api_key": "YOUR_BYBIT_API_KEY",
+    "api_secret": "YOUR_BYBIT_API_SECRET",
+    "recv_window": 20000
   },
   "trade": {
     "category": "linear",
@@ -39,16 +34,10 @@
     "settle_coin": "USDT",
     "usdt_to_php_rate": 58.0
   },
-  "demo_funds": {
-    "auto_request": true,
-    "coin": "USDT",
-    "amount": "100000",
-    "min_balance_threshold": 10000
-  },
   "engine": {
-    "poll_seconds": 5,
+    "poll_seconds": 60,
     "kline_limit": 60,
-    "scan_batch": 30,
+    "scan_batch": 1000,
     "log_file": "bot.log",
     "dry_run": false
   }

@@ -23,7 +23,7 @@ Set `"mode"` in `config.json`:
 | Mode | What it does | Needs API keys? |
 |------|--------------|-----------------|
 | **`paper`** (default) | **Standalone built-in demo.** The bot keeps its *own* simulated wallet and positions inside the program, fetches live public prices, and fills Take Profit / Stop Loss locally. Nothing is sent to any exchange account. | **No** |
-| `live` | Sends real orders to Bybit (demo account if `api.demo=true`, else mainnet). | Yes |
+| `live` | Sends real orders to Bybit (real money) using your API keys. | Yes |
 
 The standalone demo:
 - Starts with a configurable wallet (`paper.starting_balance`, in PHP by
@@ -110,34 +110,20 @@ There is nothing to `pip install`.
 
 ---
 
-## API keys: which ones do I need?
+## API keys: do I need them?
 
-There are **three** possible places trades can go, and each needs different
-credentials (or none):
+| You want to... | Run | API keys? |
+|----------------|-----|-----------|
+| Practice risk-free inside the bot | `python3 bot.py --demo` | **None** |
+| Trade real money on Bybit | `python3 bot.py --live` | Yes — `api.api_key` / `api.api_secret` |
 
-| You want to... | `mode` | `api.live_environment` | API keys needed |
-|----------------|--------|------------------------|-----------------|
-| Practice risk-free inside the bot | `paper` (or `--demo`) | (ignored) | **None** |
-| Trade Bybit's **demo** account via API | `live` (or `--live`) | `demo` | `demo_api_key` / `demo_api_secret` |
-| Trade **real money** on Bybit | `live` (or `--live`) | `mainnet` | `mainnet_api_key` / `mainnet_api_secret` |
+The **demo is fully built into the bot**: it keeps its own simulated wallet,
+reads Bybit's **live public charts**, and fills TP/SL locally. It needs **no
+API keys and no Bybit account**. Only **LIVE** mode needs keys.
 
-So the config has **separate slots** — a demo key and a live (mainnet) key —
-and `live_environment` chooses which one LIVE mode uses. They never get mixed
-up. (Legacy flat `api_key`/`api_secret` still works if you used the old
-config.)
-
-> The built-in **paper** demo (`--demo`) uses only public market data, so it
-> needs **no keys at all** — that is why the bot can run before you set any.
-
-**Creating the keys**
-- **Demo account key:** log in to Bybit → switch to **Demo Trading** (a
-  *separate account with its own user ID*) → create an API key there. It only
-  works on `https://api-demo.bybit.com`.
-- **Live (mainnet) key:** create it on your normal Bybit account with
-  **Unified Trading + trade** permission.
-
-Run `python3 check_api.py` to test every key you configured and see which
-environment each one belongs to (handy for the `10003` error).
+**Creating a LIVE key:** on your Bybit account, create an API key with
+**Unified Trading + trade** permission, then put it in `config.json` under
+`api`. Run `python3 check_api.py` to verify it.
 
 ---
 
@@ -154,14 +140,9 @@ environment each one belongs to (handy for the `10003` error).
     "reset_on_start": false               // true = wipe back to starting_balance
   },
   "api": {
-    "live_environment": "demo",             // LIVE mode trades on: "demo" | "mainnet" | "testnet"
-    "recv_window": 20000,                   // keeps requests valid (anti clock-skew)
-    "demo_api_key": "YOUR_BYBIT_DEMO_API_KEY",      // key from the Bybit Demo account
-    "demo_api_secret": "YOUR_BYBIT_DEMO_API_SECRET",
-    "mainnet_api_key": "YOUR_BYBIT_LIVE_API_KEY",   // key from your REAL mainnet account
-    "mainnet_api_secret": "YOUR_BYBIT_LIVE_API_SECRET",
-    "testnet_api_key": "",
-    "testnet_api_secret": ""
+    "api_key": "YOUR_BYBIT_API_KEY",        // only needed for --live (real money)
+    "api_secret": "YOUR_BYBIT_API_SECRET",
+    "recv_window": 20000                    // keeps requests valid (anti clock-skew)
   },
   "trade": {
     "category": "linear",                 // USDT perpetuals
@@ -185,16 +166,10 @@ environment each one belongs to (handy for the `10003` error).
     "settle_coin": "USDT",
     "usdt_to_php_rate": 58.0              // update to current rate
   },
-  "demo_funds": {                          // live demo-account top-up (live mode only)
-    "auto_request": true,
-    "coin": "USDT",
-    "amount": "100000",
-    "min_balance_threshold": 10000
-  },
   "engine": {
-    "poll_seconds": 5,                    // how often to check prices/entries
+    "poll_seconds": 60,                   // scan + check entries every 60s
     "kline_limit": 60,                    // candles fetched per symbol
-    "scan_batch": 30,                     // symbols whose klines refresh per tick
+    "scan_batch": 1000,                   // symbols scanned per tick (all pairs)
     "log_file": "bot.log",
     "dry_run": false                      // true = simulate, place no orders
   }
@@ -211,11 +186,9 @@ to restrict it.
 ### How scanning all pairs works (rate-friendly)
 - Live prices come from **one** `tickers` call per tick (covers all symbols).
 - Open positions come from **one** call per tick.
-- Klines are refreshed **round-robin**, `scan_batch` symbols per tick, so the
-  whole universe is rescanned every `~(symbols / scan_batch) * poll_seconds`.
-  With ~500 pairs, `scan_batch=30`, `poll=5s`, that's a full pass roughly
-  every 80s — well inside a 5-minute candle. Increase `scan_batch` to scan
-  faster, lower it if you hit rate limits.
+- Klines are scanned every `poll_seconds` (default **60s**). With
+  `scan_batch: 1000` the whole USDT-perp universe is scanned each tick;
+  lower `scan_batch` if you ever hit rate limits.
 - Leverage is set **lazily** the first time the bot trades a given pair, so it
   doesn't fire hundreds of calls on startup.
 
@@ -249,9 +222,9 @@ them to Bybit. The mode you pass on the command line overrides the `"mode"`
 value in `config.json`; with no flag and no terminal (e.g. `nohup`), the
 `config.json` value is used.
 
-> **Safety:** if you choose LIVE while `api.demo = false` (real mainnet money),
-> the bot makes you type `YES` to confirm, and refuses to start unattended
-> (e.g. under `nohup`) unless you pass `--yes`.
+> **Safety:** LIVE mode trades **real money**, so the bot makes you type
+> `YES` to confirm, and refuses to start unattended (e.g. under `nohup`)
+> unless you pass `--yes`.
 
 Use a custom config file:
 ```bash
@@ -288,31 +261,21 @@ so clearly on startup and exits instead of spamming the API.
 
 ## Troubleshooting
 
-### `retCode 10003: API key is invalid`
-Bybit has **four independent environments** and an API key only works on the
-one it was created in:
+### `retCode 10003: API key is invalid` (LIVE mode)
+Your LIVE key was not accepted. Common causes:
+- The key/secret was mis-copied, deleted, or expired.
+- It was created in the wrong Bybit environment (it must be a normal mainnet
+  Unified Trading key).
+- An IP whitelist on the key excludes your device.
 
-| Environment    | Host                          | config.json |
-|----------------|-------------------------------|-------------|
-| mainnet        | `api.bybit.com`               | `demo=false` (real money) |
-| **mainnet-demo** | `api-demo.bybit.com`        | `demo=true` (bot default) |
-| testnet        | `api-testnet.bybit.com`       | `testnet=true` |
-
-`10003` means your key does **not** belong to the environment the bot is
-calling. The usual cause: you created a normal key on the mainnet API page
-instead of from **inside Demo Trading**.
-
-Run the built-in diagnostic to see exactly where your key is valid:
+Run the diagnostic to see where your key is valid:
 ```bash
 python3 check_api.py
 ```
+Create a LIVE key on your Bybit account with **Unified Trading + trade**
+permission and put it in `config.json` under `api`.
 
-**To create a proper DEMO key:**
-1. Log in to your normal Bybit (mainnet) account.
-2. Switch to **Demo Trading** — it is a *separate account with its own user ID*.
-3. While **in** Demo Trading, open the **API** menu (hover your avatar → API)
-   and create a key with **Read + Trade (Unified Trading)** permission.
-4. Put that key/secret into `config.json` with `api.demo = true`.
+> Reminder: DEMO mode needs no key — `python3 bot.py --demo`.
 
 ### `retCode 10004: error sign`
 Wrong `api_secret`, or a very large device clock skew. Re-copy the secret.
