@@ -37,6 +37,21 @@ INTERVAL_MS = {
 }
 
 
+def _crossed_to_mid(direction, mid, top, bottom, prev, price):
+    """True when price crosses to the FVG mid from the origin side.
+
+    A bearish ("short") FVG sits above price -> wait for a rise up to the mid.
+    A bullish ("long") FVG sits below price -> wait for a fall down to the mid.
+    Requires a real crossing (using the previous price) and keeps the trigger
+    inside the gap zone.
+    """
+    if prev is None:
+        return False
+    if direction == "short":
+        return prev < mid <= price <= top
+    return prev > mid >= price >= bottom
+
+
 class FVGStrategy:
     def __init__(self, symbol, config, logger):
         self.symbol = symbol
@@ -56,6 +71,10 @@ class FVGStrategy:
         self.sl_roi = float(r["stop_loss_roi_pct"])
         self.tp_roi = float(r["take_profit_roi_pct"])
 
+        # Close an open position when an OPPOSITE (reversal) FVG forms and
+        # price retraces to its mid.
+        self.exit_on_opp_fvg = bool(t.get("exit_on_opposite_fvg", True))
+
         # instrument precision / leverage (set via set_instrument)
         self.qty_step = Decimal("0.001")
         self.min_qty = Decimal("0.001")
@@ -70,6 +89,8 @@ class FVGStrategy:
         self.pending = None
         self.last_closed_start = None
         self.last_price = None
+        self.exit_pending = None        # opposite-FVG exit setup
+        self.exit_last_price = None
         self.interval_ms = INTERVAL_MS.get(self.timeframe, 300_000)
 
     # ------------------------------------------------------------------ #
@@ -156,11 +177,13 @@ class FVGStrategy:
             return auto_threshold(closed_candles)
         return self.threshold_pct / 100.0
 
-    def update_fvgs(self, closed_candles):
-        """Detect a freshly-completed FVG and arm / chain a setup.
+    def update_fvgs(self, closed_candles, position_side=None):
+        """Detect a freshly-completed FVG and route it.
 
-        Only fires when a *new* candle has just closed since last check.
-        Returns the FVG registered this call, or None.
+        With no open position (position_side=None) it arms/chains the ENTRY
+        setup. With an open position it arms/chains an EXIT setup from an
+        opposite (reversal) FVG, so the position is closed when price retraces
+        to that new FVG's mid. Only fires on a newly closed candle.
         """
         if len(closed_candles) < 3:
             return None
@@ -178,7 +201,16 @@ class FVGStrategy:
         idx = len(closed_candles) - 1
         fvg = detect_fvg_at(closed_candles, idx, threshold=threshold)
 
-        # Drop a pending setup whose gap was fully filled before entry.
+        if position_side is not None:
+            # In a position: manage the opposite-FVG exit only.
+            self._update_exit(fvg, position_side)
+            return fvg
+
+        # Flat: any leftover exit setup no longer applies.
+        if self.exit_pending is not None:
+            self.clear_exit()
+
+        # Drop a pending entry whose gap was fully filled before entry.
         self._check_mitigation(newest)
 
         if fvg is None:
@@ -213,6 +245,34 @@ class FVGStrategy:
                       (self.symbol, fvg.direction, fvg.mid))
         return fvg
 
+    def _update_exit(self, fvg, position_side):
+        """Arm/chain an exit from an FVG opposite to the open position."""
+        if not self.exit_on_opp_fvg or fvg is None:
+            return
+        want = "short" if position_side == "Buy" else "long"
+        if fvg.direction != want:
+            return
+        if self.exit_pending is not None:
+            gap = fvg.start_time - self.exit_pending["last_time"]
+            consecutive = 0 < gap <= int(self.interval_ms * 1.5)
+            if consecutive and self.exit_pending["chain"] < self.max_chain:
+                self.exit_pending.update({
+                    "mid": fvg.mid, "top": fvg.top, "bottom": fvg.bottom,
+                    "last_time": fvg.start_time,
+                    "chain": self.exit_pending["chain"] + 1,
+                })
+                self.log.info("[%s] Chained exit FVG #%d. Close at mid %.6f." %
+                              (self.symbol, self.exit_pending["chain"],
+                               fvg.mid))
+                return
+        self.exit_pending = {
+            "direction": want, "mid": fvg.mid, "top": fvg.top,
+            "bottom": fvg.bottom, "last_time": fvg.start_time, "chain": 1,
+        }
+        self.exit_last_price = None
+        self.log.info("[%s] Reversal FVG. Close at mid %.6f on retrace." %
+                      (self.symbol, fvg.mid))
+
     def _check_mitigation(self, candle):
         if self.pending is None or self.pending["triggered"]:
             return
@@ -232,34 +292,36 @@ class FVGStrategy:
         return self.pending is not None and not self.pending["triggered"]
 
     def retrace_reached(self, last_price):
-        """True when price retraces to the FVG mid *from the origin side*.
-
-        A bearish FVG sits ABOVE the post-gap price, so we wait for price to
-        rise UP through the mid (origin side = below mid). A bullish FVG sits
-        BELOW the post-gap price, so we wait for price to fall DOWN through the
-        mid (origin side = above mid). We require an actual crossing (using the
-        previous observed price) so a setup that is already past its mid does
-        not fire instantly, and we keep the trigger inside the gap zone.
-        """
+        """True when price retraces to the entry FVG mid from the origin side."""
         if not self.has_pending():
             self.last_price = last_price
             return False
-
         p = self.pending
-        mid = p["mid"]
         prev = self.last_price
         self.last_price = last_price
+        return _crossed_to_mid(p["direction"], p["mid"], p["top"],
+                               p["bottom"], prev, last_price)
 
-        if prev is None:
-            # First observation: just record which side we start on.
+    # ------------------------------------------------------------------ #
+    # exit on opposite (reversal) FVG
+    # ------------------------------------------------------------------ #
+    def has_exit(self):
+        return self.exit_pending is not None
+
+    def exit_reached(self, last_price):
+        """True when price retraces to the exit (reversal) FVG mid."""
+        if self.exit_pending is None:
+            self.exit_last_price = last_price
             return False
+        p = self.exit_pending
+        prev = self.exit_last_price
+        self.exit_last_price = last_price
+        return _crossed_to_mid(p["direction"], p["mid"], p["top"],
+                               p["bottom"], prev, last_price)
 
-        if p["direction"] == "short":
-            # price must cross up to the mid from below, still within the gap
-            return prev < mid <= last_price <= p["top"]
-        else:
-            # price must cross down to the mid from above, still within the gap
-            return prev > mid >= last_price >= p["bottom"]
+    def clear_exit(self):
+        self.exit_pending = None
+        self.exit_last_price = None
 
     def prepare_entry(self, balance, price):
         """Return an order spec dict if a position can be sized, else None.

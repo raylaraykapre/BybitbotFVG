@@ -159,20 +159,34 @@ class Bot:
             self.log.error("No symbols matched config.")
 
     # ------------------------------------------------------------------ #
-    def scan_klines_batch(self):
-        """Refresh klines + detect FVGs for the next batch of symbols."""
+    def scan_klines_batch(self, open_map):
+        """Refresh klines + detect FVGs.
+
+        While at the max open-position count we STOP scanning the rest of the
+        market and focus only on the open-position symbol(s) - there we watch
+        for an opposite (reversal) FVG to manage the exit.
+        """
         if not self.scan_order:
             return
-        n = len(self.scan_order)
-        batch = min(self.scan_batch, n)
-        for _ in range(batch):
+
+        if open_map and len(open_map) >= self.max_open:
+            targets = [s for s in open_map if s in self.strategies]
+        else:
+            n = len(self.scan_order)
+            batch = min(self.scan_batch, n)
+            targets = []
+            for _ in range(batch):
+                targets.append(self.scan_order[self.scan_idx % n])
+                self.scan_idx = (self.scan_idx + 1) % n
+
+        for symbol in targets:
             if not self._running:
                 return
-            symbol = self.scan_order[self.scan_idx % n]
-            self.scan_idx = (self.scan_idx + 1) % n
             strat = self.strategies.get(symbol)
             if strat is None:
                 continue
+            pos = open_map.get(symbol)
+            side = pos.get("side") if pos else None
             try:
                 candles = self.client.get_kline(
                     self.category, symbol, self.timeframe,
@@ -180,9 +194,26 @@ class Bot:
                 if len(candles) < 4:
                     continue
                 closed = candles[:-1]  # drop in-progress candle
-                strat.update_fvgs(closed)
+                strat.update_fvgs(closed, position_side=side)
             except BybitError as exc:
                 self.log.debug("[%s] kline error." % symbol)
+
+    def manage_exits(self, open_map, price_map):
+        """Close a position when price retraces to the mid of a new opposite
+        (reversal) FVG that formed while the position was open."""
+        for symbol, pos in open_map.items():
+            strat = self.strategies.get(symbol)
+            if strat is None or not strat.has_exit():
+                continue
+            price = price_map.get(symbol)
+            if price is None:
+                continue
+            if strat.exit_reached(price):
+                self.log.info("[%s] Reversal mid hit; closing position." %
+                              symbol)
+                if self.broker.close_position(symbol, pos, price):
+                    strat.clear_exit()
+
 
     def check_entries(self, price_map, open_map):
         """Trigger entries where price retraced to the FVG mid."""
@@ -274,9 +305,12 @@ class Bot:
     # ------------------------------------------------------------------ #
     def run_once(self, report=False):
         prices = self.price_map()
-        self.broker.on_tick(prices)          # paper: fill TP/SL locally
+        self.broker.on_tick(prices)          # demo: fill TP/SL locally
         open_map = self.broker.open_positions_map()
-        self.scan_klines_batch()
+        self.scan_klines_batch(open_map)
+        # Close on a reversal-FVG retrace, then re-check positions.
+        self.manage_exits(open_map, prices)
+        open_map = self.broker.open_positions_map()
         self.check_entries(prices, open_map)
         if report:
             # Re-fetch so a position opened this tick shows immediately.

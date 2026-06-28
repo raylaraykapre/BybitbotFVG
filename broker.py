@@ -126,6 +126,20 @@ class LiveBroker:
         # Live exchange handles TP/SL server-side; nothing to do locally.
         return
 
+    def close_position(self, symbol, pos, price=None):
+        """Close an open position with a reduce-only market order."""
+        side = "Sell" if pos.get("side") == "Buy" else "Buy"
+        qty = pos.get("size")
+        try:
+            self.client.place_market_order(
+                self.category, symbol, side, qty,
+                position_idx=0, reduce_only=True)
+            self.log.info("CLOSED %s (reversal FVG)." % symbol)
+            return True
+        except BybitError as exc:
+            self.log.error("[%s] Close failed: %s" % (symbol, exc))
+            return False
+
 
 # ---------------------------------------------------------------------------
 # Paper broker (standalone built-in demo)
@@ -311,6 +325,16 @@ class PaperBroker:
                        self._php(pnl), self._php(self.get_equity())))
         self.marks.pop(symbol, None)
         self._save()
+
+    def close_position(self, symbol, pos=None, price=None):
+        """Close a simulated position at the given (or last marked) price."""
+        if symbol not in self.positions:
+            return False
+        px = price if price is not None else self.marks.get(symbol)
+        if px is None:
+            px = float(self.positions[symbol]["entry"])
+        self._close(symbol, float(px), "reversal FVG")
+        return True
 
     def on_tick(self, price_map):
         """Mark positions and fill TP/SL locally against live prices."""

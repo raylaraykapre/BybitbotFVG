@@ -26,7 +26,8 @@
     "max_fvg_chain": 3,
     "fvg_threshold_pct": 0.0,
     "auto_threshold": false,
-    "max_symbols": 0
+    "max_symbols": 0,
+    "exit_on_opposite_fvg": true
   },
 
   "risk": {

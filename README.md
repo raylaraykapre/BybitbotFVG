@@ -51,7 +51,12 @@ The built-in demo:
    immediately following candle), the pending entry is **reconstructed to the
    mid of the newer FVG**. This continues for up to **3** consecutive FVGs
    (`max_fvg_chain`).
-5. Sizes every position at **85%** of the **whole wallet balance**
+5. **While a position is open it stops scanning the rest of the market** and
+   focuses on that symbol. If an **opposite (reversal) FVG** forms, it waits
+   for price to retrace to that new FVG's mid and then **closes the position**
+   (`exit_on_opposite_fvg`, default on). Take Profit / Stop Loss still apply as
+   hard targets; whichever is reached first wins.
+6. Sizes every position at **85%** of the **whole wallet balance**
    (`position_size_pct`, editable up or down anytime).
 6. Sets leverage **per pair** as a **percent of that pair's maximum leverage**
    (`leverage_pct`). For example, at `leverage_pct = 75`:
@@ -158,7 +163,8 @@ API keys and no Bybit account**. Only **LIVE** mode needs keys.
     "max_fvg_chain": 3,                     // chain up to 3 consecutive FVGs
     "fvg_threshold_pct": 0.0,
     "auto_threshold": false,
-    "max_symbols": 0                        // 0 = no limit; else cap pairs scanned
+    "max_symbols": 0,                       // 0 = no limit; else cap pairs scanned
+    "exit_on_opposite_fvg": true            // close a position when a reversal FVG retraces to its mid
   },
 
   "risk": {
