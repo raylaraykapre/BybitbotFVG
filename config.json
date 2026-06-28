@@ -1,17 +1,20 @@
 {
-  "mode": "paper",
-  "paper": {
+  "mode": "demo",
+
+  "demo": {
     "starting_balance": 100000,
     "balance_currency": "PHP",
     "taker_fee_pct": 0.055,
-    "state_file": "paper_state.json",
+    "state_file": "demo_state.json",
     "reset_on_start": false
   },
-  "api": {
-    "api_key": "YOUR_BYBIT_API_KEY",
-    "api_secret": "YOUR_BYBIT_API_SECRET",
+
+  "live_api": {
+    "api_key": "",
+    "api_secret": "",
     "recv_window": 20000
   },
+
   "trade": {
     "category": "linear",
     "symbols": "ALL",
@@ -25,15 +28,18 @@
     "auto_threshold": false,
     "max_symbols": 0
   },
+
   "risk": {
     "stop_loss_roi_pct": 30,
     "take_profit_roi_pct": 350
   },
+
   "currency": {
     "display_currency": "PHP",
     "settle_coin": "USDT",
     "usdt_to_php_rate": 58.0
   },
+
   "engine": {
     "poll_seconds": 60,
     "kline_limit": 60,

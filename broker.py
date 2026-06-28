@@ -134,12 +134,12 @@ class PaperBroker:
     def __init__(self, config, logger):
         self.cfg = config
         self.log = logger
-        p = config.get("paper", {})
+        p = config.get("demo") or config.get("paper") or {}
         self.settle_coin = config["currency"]["settle_coin"]
         self.display_ccy = config["currency"].get("display_currency", "PHP")
         self.fx = float(config["currency"].get("usdt_to_php_rate", 1.0)) or 1.0
         self.fee_pct = float(p.get("taker_fee_pct", 0.0))
-        self.state_file = p.get("state_file", "paper_state.json")
+        self.state_file = p.get("state_file", "demo_state.json")
 
         # Convert the configured starting balance into the settle coin (USDT).
         start = float(p.get("starting_balance", 100000))
@@ -338,7 +338,7 @@ class PaperBroker:
 
 # ---------------------------------------------------------------------------
 def make_broker(client, config, logger):
-    mode = str(config.get("mode", "paper")).lower()
+    mode = str(config.get("mode", "demo")).lower()
     if mode == "live":
         return LiveBroker(client, config, logger)
     return PaperBroker(config, logger)

@@ -13,11 +13,10 @@ on the chosen timeframe, and enters on a retrace to the FVG mid. Leverage is
 set per pair as a PERCENT of that pair's maximum leverage.
 
 Two modes (config.json -> "mode"):
-  * "paper" - a STANDALONE built-in demo. The bot keeps its own simulated
-              wallet/positions and fills TP/SL locally against live public
-              prices. No Bybit account or API keys required.
-  * "live"  - sends real orders to Bybit (mainnet or demo account) and needs
-              valid API keys.
+  * "demo" - a built-in demo. The bot keeps its own simulated wallet/positions
+             and fills TP/SL locally against Bybit's live public charts. No
+             Bybit account or API keys required.
+  * "live" - sends real orders to Bybit and needs valid API keys.
 
 Usage:
     python3 bot.py                 # uses ./config.json
@@ -74,13 +73,12 @@ class Bot:
         # Resolve the trading mode: CLI / selector override wins over config.
         if mode_override:
             self.cfg["mode"] = mode_override
-        self.mode = str(self.cfg.get("mode", "paper")).lower()
+        self.mode = str(self.cfg.get("mode", "demo")).lower()
 
-        api = self.cfg["api"]
-        # Resolve which credentials + Bybit environment LIVE mode uses.
+        # Resolve the Bybit API credentials for LIVE trading (none for demo).
         self.api = resolve_api(self.cfg)
         # The client is used for PUBLIC market data (klines/tickers/instruments)
-        # in every mode. In paper mode it never makes authenticated calls.
+        # in every mode. In demo mode it never makes authenticated calls.
         self.client = BybitClient(
             api_key=self.api["api_key"],
             api_secret=self.api["api_secret"],
@@ -320,8 +318,8 @@ Usage:
   python3 bot.py [config.json] [--demo | --live] [--yes]
 
 Mode options (choose how it trades; both use LIVE Bybit charts/prices):
-  --demo, --paper   Built-in standalone demo: simulated wallet, no API keys,
-                    no real orders. (Same as config "mode": "paper".)
+  --demo, --paper   Built-in demo: simulated wallet, no API keys, no real
+                    orders. (Same as config "mode": "demo".)
   --live            Real orders on Bybit using your API keys.
                     (Same as config "mode": "live".)
 
@@ -341,7 +339,7 @@ def parse_args(argv):
     for a in argv[1:]:
         al = a.lower()
         if al in ("--demo", "--paper", "-d", "demo", "paper"):
-            mode_override = "paper"
+            mode_override = "demo"
         elif al in ("--live", "-l", "live"):
             mode_override = "live"
         elif al in ("--yes", "-y"):
@@ -360,17 +358,13 @@ def parse_args(argv):
 
 def select_mode_interactive(default_mode):
     """Ask the user to pick demo vs live (only when run in a terminal)."""
-    default_mode = (default_mode or "paper").lower()
+    default_mode = (default_mode or "demo").lower()
     default_choice = "2" if default_mode == "live" else "1"
-    print("=" * 60)
-    print(" BybitbotFVG - choose trading mode")
-    print("=" * 60)
-    print("  1) DEMO  - built-in paper trading (no API keys, simulated")
-    print("             wallet, NO real orders) - uses live Bybit charts")
-    print("  2) LIVE  - REAL orders on Bybit using your API keys")
-    print("-" * 60)
+    print("Choose mode:")
+    print("  1) DEMO - built-in, no API keys, live Bybit charts.")
+    print("  2) LIVE - real orders on Bybit, needs API keys.")
     try:
-        raw = input("Select mode [1=DEMO, 2=LIVE] (default %s): "
+        raw = input("Select [1=DEMO, 2=LIVE] (default %s): "
                     % default_choice).strip()
     except EOFError:
         raw = ""
@@ -378,7 +372,7 @@ def select_mode_interactive(default_mode):
         raw = default_choice
     if raw in ("2", "live", "l", "L"):
         return "live"
-    return "paper"
+    return "demo"
 
 
 def confirm_live(config, assume_yes):
@@ -404,7 +398,7 @@ def main():
         sys.exit(1)
 
     cfg_preview = load_config(config_path)
-    default_mode = str(cfg_preview.get("mode", "paper")).lower()
+    default_mode = str(cfg_preview.get("mode", "demo")).lower()
 
     # Decide the mode: explicit flag > interactive prompt > config default.
     if mode_override is None and sys.stdin.isatty():

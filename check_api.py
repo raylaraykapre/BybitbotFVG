@@ -32,7 +32,7 @@ def main():
     with open(path, "r", encoding="utf-8") as fh:
         cfg = json.load(fh)
 
-    api = cfg.get("api", {})
+    api = cfg.get("live_api") or cfg.get("api") or {}
     key = (api.get("api_key") or "").strip()
     sec = (api.get("api_secret") or "").strip()
     coin = cfg.get("currency", {}).get("settle_coin", "USDT")
@@ -42,7 +42,8 @@ def main():
             or sec.startswith("YOUR_"):
         print("No API key set. The DEMO mode needs none: run "
               "`python3 bot.py --demo`.")
-        print("For LIVE, set api.api_key and api.api_secret in config.json.")
+        print("For LIVE, set live_api.api_key and live_api.api_secret in "
+              "config.json.")
         return
 
     print("Testing your key across Bybit environments...")

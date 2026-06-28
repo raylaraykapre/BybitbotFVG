@@ -34,7 +34,7 @@ def resolve_api(cfg):
 
     Returns a dict: api_key, api_secret, demo, testnet, recv_window.
     """
-    api = cfg.get("api", {}) or {}
+    api = cfg.get("live_api") or cfg.get("api") or {}
     return {
         "api_key": (api.get("api_key") or "").strip(),
         "api_secret": (api.get("api_secret") or "").strip(),

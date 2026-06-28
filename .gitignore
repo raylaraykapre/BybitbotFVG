@@ -7,3 +7,5 @@ nohup.out
 
 paper_state.json
 *.tmp
+
+demo_state.json

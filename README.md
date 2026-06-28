@@ -16,24 +16,24 @@ for full credit and license terms.
 
 ---
 
-## Modes: standalone demo vs live
+## Modes: demo vs live
 
-Set `"mode"` in `config.json`:
+Set `"mode"` in `config.json` (or pass `--demo` / `--live`):
 
 | Mode | What it does | Needs API keys? |
 |------|--------------|-----------------|
-| **`paper`** (default) | **Standalone built-in demo.** The bot keeps its *own* simulated wallet and positions inside the program, fetches live public prices, and fills Take Profit / Stop Loss locally. Nothing is sent to any exchange account. | **No** |
+| **`demo`** (default) | **Built-in demo.** The bot keeps its *own* simulated wallet and positions inside the program, reads Bybit's live charts, and fills Take Profit / Stop Loss locally. Nothing is sent to any exchange account. | **No** |
 | `live` | Sends real orders to Bybit (real money) using your API keys. | Yes |
 
-The standalone demo:
-- Starts with a configurable wallet (`paper.starting_balance`, in PHP by
-  default) and **persists** to `paper_state.json`, so balance and open
+The built-in demo:
+- Starts with a configurable wallet (`demo.starting_balance`, in PHP by
+  default) and **persists** to `demo_state.json`, so balance and open
   positions survive restarts.
 - Uses **only public market data** (klines + tickers) — these need no
-  authentication, so you can paper-trade without ever creating a key.
-- Simulates taker fees (`paper.taker_fee_pct`) and tracks realised PnL,
+  authentication, so you can demo-trade without ever creating a key.
+- Simulates taker fees (`demo.taker_fee_pct`) and tracks realised PnL,
   wins and losses.
-- Set `paper.reset_on_start: true` to wipe it back to the starting balance.
+- Set `demo.reset_on_start: true` to wipe it back to the starting balance.
 
 ---
 
@@ -83,8 +83,8 @@ The standalone demo:
 Bybit crypto **perpetual contracts settle in USDT** — there is no native PHP
 wallet for derivatives. The bot computes sizing/PnL internally in USDT (the
 contract unit) and **displays everything in PHP** using a configurable rate
-(`currency.usdt_to_php_rate`). In the standalone demo you can even set the
-starting balance directly in PHP (`paper.balance_currency: "PHP"`).
+(`currency.usdt_to_php_rate`). In the built-in demo you can even set the
+starting balance directly in PHP (`demo.balance_currency: "PHP"`).
 
 ---
 
@@ -123,7 +123,7 @@ API keys and no Bybit account**. Only **LIVE** mode needs keys.
 
 **Creating a LIVE key:** on your Bybit account, create an API key with
 **Unified Trading + trade** permission, then put it in `config.json` under
-`api`. Run `python3 check_api.py` to verify it.
+`live_api`. Run `python3 check_api.py` to verify it.
 
 ---
 
@@ -131,57 +131,61 @@ API keys and no Bybit account**. Only **LIVE** mode needs keys.
 
 ```jsonc
 {
-  "mode": "paper",                        // "paper" = built-in standalone demo, "live" = real orders
-  "paper": {
-    "starting_balance": 100000,           // simulated wallet (in balance_currency)
-    "balance_currency": "PHP",            // "PHP" or "USDT"
-    "taker_fee_pct": 0.055,               // simulated taker fee per fill
-    "state_file": "paper_state.json",     // persists wallet + positions
-    "reset_on_start": false               // true = wipe back to starting_balance
+  "mode": "demo",                           // "demo" = built-in (no keys), "live" = real orders
+
+  "demo": {
+    "starting_balance": 100000,             // simulated wallet (in balance_currency)
+    "balance_currency": "PHP",              // "PHP" or "USDT"
+    "taker_fee_pct": 0.055,                 // simulated taker fee per fill
+    "state_file": "demo_state.json",        // persists wallet + positions
+    "reset_on_start": false                 // true = wipe back to starting_balance
   },
-  "api": {
-    "api_key": "YOUR_BYBIT_API_KEY",        // only needed for --live (real money)
-    "api_secret": "YOUR_BYBIT_API_SECRET",
+
+  "live_api": {                              // ONLY used for --live (real money)
+    "api_key": "",                          // leave empty for demo
+    "api_secret": "",
     "recv_window": 20000                    // keeps requests valid (anti clock-skew)
   },
+
   "trade": {
-    "category": "linear",                 // USDT perpetuals
-    "symbols": "ALL",                     // "ALL" pairs, or ["BTCUSDT","ETHUSDT"]
-    "quote_coin": "USDT",                 // only scan pairs quoted in this coin
-    "timeframe": "5",                     // 1,3,5,15,30,60,120,240,360,720,D,W,M
-    "leverage_pct": 75,                   // % of EACH pair's MAX leverage
-    "position_size_pct": 85,              // 85% of wallet per position (editable)
-    "max_open_positions": 1,              // current open positions allowed (global)
-    "max_fvg_chain": 3,                   // chain up to 3 consecutive FVGs
-    "fvg_threshold_pct": 0.0,             // min gap size %
-    "auto_threshold": false,              // LuxAlgo "Auto" threshold
-    "max_symbols": 0                      // 0 = no limit; else cap pairs scanned
+    "category": "linear",                   // USDT perpetuals
+    "symbols": "ALL",                       // "ALL" pairs, or ["BTCUSDT","ETHUSDT"]
+    "quote_coin": "USDT",
+    "timeframe": "5",                       // 1,3,5,15,30,60,120,240,360,720,D,W,M
+    "leverage_pct": 75,                     // % of EACH pair's MAX leverage
+    "position_size_pct": 85,                // 85% of wallet per position (editable)
+    "max_open_positions": 1,                // current open positions allowed (global)
+    "max_fvg_chain": 3,                     // chain up to 3 consecutive FVGs
+    "fvg_threshold_pct": 0.0,
+    "auto_threshold": false,
+    "max_symbols": 0                        // 0 = no limit; else cap pairs scanned
   },
+
   "risk": {
-    "stop_loss_roi_pct": 30,              // SL at 30% ROI
-    "take_profit_roi_pct": 350            // TP at 350% ROI
+    "stop_loss_roi_pct": 30,                // SL at 30% ROI
+    "take_profit_roi_pct": 350              // TP at 350% ROI
   },
+
   "currency": {
     "display_currency": "PHP",
     "settle_coin": "USDT",
-    "usdt_to_php_rate": 58.0              // update to current rate
+    "usdt_to_php_rate": 58.0
   },
+
   "engine": {
-    "poll_seconds": 60,                   // scan + check entries every 60s
-    "kline_limit": 60,                    // candles fetched per symbol
-    "scan_batch": 1000,                   // symbols scanned per tick (all pairs)
+    "poll_seconds": 60,                     // scan + check entries every 60s
+    "kline_limit": 60,
+    "scan_batch": 1000,                     // symbols scanned per tick (all pairs)
     "log_file": "bot.log",
-    "dry_run": false                      // true = simulate, place no orders
+    "dry_run": false
   }
 }
 ```
 
-Everything you asked to be editable lives here: **trading mode**, **API
-key/secret**, **stop loss & take profit (by ROI)**, **current open positions**
-(`max_open_positions`), the **timeframe to trade from**, the **leverage
-percentage** (`leverage_pct`), and the **position size** (`position_size_pct`,
-default 85%). Set `symbols` to `"ALL"` to scan every USDT perpetual, or a list
-to restrict it.
+The **demo needs no keys** — `live_api` is left empty and is only read when you
+run `--live`. Editable: **mode**, **stop loss / take profit (ROI)**, **open
+positions** (`max_open_positions`), **timeframe**, **leverage %**
+(`leverage_pct`), and **position size** (`position_size_pct`, default 85%).
 
 ### How scanning all pairs works (rate-friendly)
 - Live prices come from **one** `tickers` call per tick (covers all symbols).
@@ -302,7 +306,7 @@ included, or every signed call will fail.
 | `strategy.py`     | Retrace-to-mid entries, chaining, ROI SL/TP, sizing.     |
 | `config.json`     | All user-editable settings.                              |
 | `check_api.py`    | Diagnose which Bybit environment your API key belongs to.|
-| `paper_state.json`| Auto-saved demo wallet/positions (created at runtime).   |
+| `demo_state.json` | Auto-saved demo wallet/positions (created at runtime).   |
 | `LICENSE`         | CC BY-NC-SA 4.0 + credit to LuxAlgo.                      |
 
 ---
