@@ -245,6 +245,15 @@ Stop it with `Ctrl+C` (or `kill <pid>`); it shuts down gracefully.
 **Tip:** set `"dry_run": true` in `config.json` to watch it detect FVGs and
 announce the trades it *would* place, without filling them in either mode.
 
+### Resetting the demo wallet
+The demo wallet is **saved to `demo_state.json` and reloaded on every restart**
+(so your balance and positions survive restarts). That means editing
+`starting_balance` does **nothing** until you reset. To apply a new balance:
+```bash
+python3 bot.py --reset        # wipes the demo wallet back to starting_balance
+```
+(Or set `"reset_on_start": true` in `config.json`, or delete `demo_state.json`.)
+
 ---
 
 ## "Make sure the API will not be invalid"

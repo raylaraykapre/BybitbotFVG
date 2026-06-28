@@ -174,8 +174,10 @@ class PaperBroker:
             self.losses = int(st.get("losses", 0))
             self.positions = st.get("positions", {})
             self._seq = int(st.get("seq", 0))
-            self.log.info("Loaded demo wallet. Cash %.2f %s. Open %d." %
+            self.log.info("Loaded saved demo wallet. Cash %.2f %s. Open %d." %
                           (self.cash, self.settle_coin, len(self.positions)))
+            self.log.info("(Saved balance restored; starting_balance ignored. "
+                          "Use --reset to start fresh.)")
         except Exception as exc:  # noqa: BLE001
             self.log.warning("Demo state load failed. Starting fresh.")
             self.cash = self.start_usdt

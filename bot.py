@@ -60,7 +60,7 @@ def setup_logger(log_file):
 
 
 class Bot:
-    def __init__(self, config_path, mode_override=None):
+    def __init__(self, config_path, mode_override=None, reset=False):
         self.config_path = config_path
         self.cfg = load_config(config_path)
         eng = self.cfg["engine"]
@@ -74,6 +74,13 @@ class Bot:
         if mode_override:
             self.cfg["mode"] = mode_override
         self.mode = str(self.cfg.get("mode", "demo")).lower()
+
+        # --reset forces the built-in demo wallet back to starting_balance.
+        if reset:
+            section = self.cfg.get("demo")
+            if section is None:
+                section = self.cfg.setdefault("paper", {})
+            section["reset_on_start"] = True
 
         # Resolve the Bybit API credentials for LIVE trading (none for demo).
         self.api = resolve_api(self.cfg)
@@ -355,6 +362,7 @@ If no mode flag is given and you run in a terminal, the bot asks you to pick.
 Otherwise it uses the "mode" set in config.json.
 
 Other:
+  --reset           Reset the built-in demo wallet to starting_balance.
   --yes             Skip the real-money confirmation prompt in live mode.
   -h, --help        Show this help and exit.
 """
@@ -364,6 +372,7 @@ def parse_args(argv):
     config_path = "config.json"
     mode_override = None
     assume_yes = False
+    reset = False
     for a in argv[1:]:
         al = a.lower()
         if al in ("--demo", "--paper", "-d", "demo", "paper"):
@@ -372,6 +381,8 @@ def parse_args(argv):
             mode_override = "live"
         elif al in ("--yes", "-y"):
             assume_yes = True
+        elif al in ("--reset", "-r"):
+            reset = True
         elif al in ("-h", "--help", "help"):
             print(USAGE)
             sys.exit(0)
@@ -381,7 +392,7 @@ def parse_args(argv):
             print("Unknown option: %s\n" % a)
             print(USAGE)
             sys.exit(1)
-    return config_path, mode_override, assume_yes
+    return config_path, mode_override, assume_yes, reset
 
 
 def select_mode_interactive(default_mode):
@@ -420,7 +431,7 @@ def confirm_live(config, assume_yes):
 
 
 def main():
-    config_path, mode_override, assume_yes = parse_args(sys.argv)
+    config_path, mode_override, assume_yes, reset = parse_args(sys.argv)
     if not os.path.exists(config_path):
         print("Config file not found: %s" % config_path)
         sys.exit(1)
@@ -437,7 +448,7 @@ def main():
         print("Live trading not confirmed. Exiting.")
         sys.exit(0)
 
-    bot = Bot(config_path, mode_override=resolved_mode)
+    bot = Bot(config_path, mode_override=resolved_mode, reset=reset)
     signal.signal(signal.SIGINT, bot.stop)
     signal.signal(signal.SIGTERM, bot.stop)
     bot.run()
