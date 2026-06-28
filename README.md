@@ -211,20 +211,46 @@ to restrict it.
 python3 bot.py
 ```
 
+When you start it in a terminal, the bot **asks you to choose the mode**:
+
+```
+ 1) DEMO  - built-in paper trading (no API keys, simulated wallet) - live charts
+ 2) LIVE  - REAL orders on Bybit using your API keys
+```
+
+You can also force the mode from the command line (and skip the prompt):
+
+```bash
+python3 bot.py --demo      # built-in standalone demo (no keys, no real orders)
+python3 bot.py --live      # real orders on Bybit (uses your API keys)
+python3 bot.py --live --yes  # live + skip the real-money confirmation
+python3 bot.py my.json --demo
+```
+
+Both modes connect to **live Bybit charts/prices**. The only difference is
+where orders go: DEMO fills them in the bot's own simulated wallet; LIVE sends
+them to Bybit. The mode you pass on the command line overrides the `"mode"`
+value in `config.json`; with no flag and no terminal (e.g. `nohup`), the
+`config.json` value is used.
+
+> **Safety:** if you choose LIVE while `api.demo = false` (real mainnet money),
+> the bot makes you type `YES` to confirm, and refuses to start unattended
+> (e.g. under `nohup`) unless you pass `--yes`.
+
 Use a custom config file:
 ```bash
-python3 bot.py my_config.json
+python3 bot.py my_config.json --demo
 ```
 
 Run it persistently in Termux/Linux (survives terminal close):
 ```bash
-nohup python3 bot.py > run.out 2>&1 &
+nohup python3 bot.py --demo > run.out 2>&1 &
 ```
 
 Stop it with `Ctrl+C` (or `kill <pid>`); it shuts down gracefully.
 
-**Tip:** set `"dry_run": true` first to watch it detect FVGs and announce the
-trades it *would* place, without sending real (demo) orders.
+**Tip:** set `"dry_run": true` in `config.json` to watch it detect FVGs and
+announce the trades it *would* place, without filling them in either mode.
 
 ---
 

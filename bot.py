@@ -61,7 +61,7 @@ def setup_logger(log_file):
 
 
 class Bot:
-    def __init__(self, config_path):
+    def __init__(self, config_path, mode_override=None):
         self.config_path = config_path
         self.cfg = load_config(config_path)
         eng = self.cfg["engine"]
@@ -70,6 +70,10 @@ class Bot:
         self.kline_limit = int(eng.get("kline_limit", 60))
         self.scan_batch = int(eng.get("scan_batch", 30))
         self.dry_run = bool(eng.get("dry_run", False))
+
+        # Resolve the trading mode: CLI / selector override wins over config.
+        if mode_override:
+            self.cfg["mode"] = mode_override
         self.mode = str(self.cfg.get("mode", "paper")).lower()
 
         api = self.cfg["api"]
@@ -330,12 +334,116 @@ class Bot:
         self._running = False
 
 
+USAGE = """\
+BybitbotFVG - Fair Value Gap auto-trading bot for Bybit
+
+Usage:
+  python3 bot.py [config.json] [--demo | --live] [--yes]
+
+Mode options (choose how it trades; both use LIVE Bybit charts/prices):
+  --demo, --paper   Built-in standalone demo: simulated wallet, no API keys,
+                    no real orders. (Same as config "mode": "paper".)
+  --live            Real orders on Bybit using your API keys.
+                    (Same as config "mode": "live".)
+
+If no mode flag is given and you run in a terminal, the bot asks you to pick.
+Otherwise it uses the "mode" set in config.json.
+
+Other:
+  --yes             Skip the real-money confirmation prompt in live mode.
+  -h, --help        Show this help and exit.
+"""
+
+
+def parse_args(argv):
+    config_path = "config.json"
+    mode_override = None
+    assume_yes = False
+    for a in argv[1:]:
+        al = a.lower()
+        if al in ("--demo", "--paper", "-d", "demo", "paper"):
+            mode_override = "paper"
+        elif al in ("--live", "-l", "live"):
+            mode_override = "live"
+        elif al in ("--yes", "-y"):
+            assume_yes = True
+        elif al in ("-h", "--help", "help"):
+            print(USAGE)
+            sys.exit(0)
+        elif not a.startswith("-"):
+            config_path = a
+        else:
+            print("Unknown option: %s\n" % a)
+            print(USAGE)
+            sys.exit(1)
+    return config_path, mode_override, assume_yes
+
+
+def select_mode_interactive(default_mode):
+    """Ask the user to pick demo vs live (only when run in a terminal)."""
+    default_mode = (default_mode or "paper").lower()
+    default_choice = "2" if default_mode == "live" else "1"
+    print("=" * 60)
+    print(" BybitbotFVG - choose trading mode")
+    print("=" * 60)
+    print("  1) DEMO  - built-in paper trading (no API keys, simulated")
+    print("             wallet, NO real orders) - uses live Bybit charts")
+    print("  2) LIVE  - REAL orders on Bybit using your API keys")
+    print("-" * 60)
+    try:
+        raw = input("Select mode [1=DEMO, 2=LIVE] (default %s): "
+                    % default_choice).strip()
+    except EOFError:
+        raw = ""
+    if raw == "":
+        raw = default_choice
+    if raw in ("2", "live", "l", "L"):
+        return "live"
+    return "paper"
+
+
+def confirm_live(config, assume_yes):
+    """Require an explicit confirmation before trading real money."""
+    if assume_yes:
+        return True
+    is_demo_account = bool(config.get("api", {}).get("demo", True))
+    if is_demo_account:
+        # Live mode but pointed at the Bybit DEMO account - not real money.
+        return True
+    if not sys.stdin.isatty():
+        # Non-interactive (e.g. nohup) + real mainnet: refuse unless --yes.
+        print("Refusing to start LIVE real-money trading non-interactively. "
+              "Re-run with --yes to confirm, or use --demo.")
+        return False
+    print("!" * 60)
+    print("WARNING: LIVE mode on the Bybit MAINNET account = REAL MONEY.")
+    print("!" * 60)
+    try:
+        ans = input("Type YES (uppercase) to trade real funds: ").strip()
+    except EOFError:
+        ans = ""
+    return ans == "YES"
+
+
 def main():
-    config_path = sys.argv[1] if len(sys.argv) > 1 else "config.json"
+    config_path, mode_override, assume_yes = parse_args(sys.argv)
     if not os.path.exists(config_path):
         print("Config file not found: %s" % config_path)
         sys.exit(1)
-    bot = Bot(config_path)
+
+    cfg_preview = load_config(config_path)
+    default_mode = str(cfg_preview.get("mode", "paper")).lower()
+
+    # Decide the mode: explicit flag > interactive prompt > config default.
+    if mode_override is None and sys.stdin.isatty():
+        mode_override = select_mode_interactive(default_mode)
+    resolved_mode = (mode_override or default_mode).lower()
+
+    if resolved_mode == "live" and not confirm_live(cfg_preview, assume_yes):
+        print("Live trading not confirmed. Exiting.")
+        sys.exit(0)
+
+    bot = Bot(config_path, mode_override=resolved_mode)
     signal.signal(signal.SIGINT, bot.stop)
     signal.signal(signal.SIGTERM, bot.stop)
     bot.run()
