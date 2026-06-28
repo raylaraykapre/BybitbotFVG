@@ -1,5 +1,10 @@
 """
-FVG trading strategy engine.
+FVG trading strategy engine (per-symbol).
+
+One FVGStrategy instance is created for each traded symbol. It holds that
+symbol's precision filters, its detection state, and the pending setup.
+Account-level concerns (balance, global position count, order placement) are
+handled by the Bot, which drives many strategies at once.
 
 Rules (as requested):
   * Detect Fair Value Gaps using the LuxAlgo logic (see fvg.py).
@@ -8,17 +13,19 @@ Rules (as requested):
   * Enter only when price retraces back to the MID of the identified FVG.
   * Chaining: if another FVG forms right after the previous one (on the
     immediately following candle), move the pending entry to the mid of the
-    newer FVG. This continues for up to `max_fvg_chain` (default 3) FVGs.
+    newer FVG. Continues for up to `max_fvg_chain` (default 3) FVGs.
   * Position size = `position_size_pct` (default 85%) of wallet balance.
+  * Leverage is a PERCENT of each pair's MAX leverage:
+        actual_leverage = pair_max_leverage * leverage_pct / 100
+    e.g. a pair with 100x max at 75% -> 75x; a 12x-max pair at 50% -> 6x.
   * Stop loss / take profit follow Bybit's "% by ROI":
-        price_move = roi_pct / 100 / leverage
+        price_move = roi_pct / 100 / actual_leverage
         long : tp = entry*(1+move_tp), sl = entry*(1-move_sl)
         short: tp = entry*(1-move_tp), sl = entry*(1+move_sl)
 """
 
 from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
 
-from bybit_client import BybitError
 from fvg import detect_fvg_at, auto_threshold
 
 
@@ -31,18 +38,16 @@ INTERVAL_MS = {
 
 
 class FVGStrategy:
-    def __init__(self, client, config, logger):
-        self.client = client
+    def __init__(self, symbol, config, logger):
+        self.symbol = symbol
         self.cfg = config
         self.log = logger
 
         t = config["trade"]
         self.category = t["category"]
-        self.symbol = t["symbol"]
         self.timeframe = str(t["timeframe"])
-        self.leverage = float(t["leverage"])
+        self.leverage_pct = float(t["leverage_pct"])
         self.position_size_pct = float(t["position_size_pct"])
-        self.max_open = int(t["max_open_positions"])
         self.max_chain = int(t["max_fvg_chain"])
         self.threshold_pct = float(t.get("fvg_threshold_pct", 0.0))
         self.auto_thresh = bool(t.get("auto_threshold", False))
@@ -51,65 +56,72 @@ class FVGStrategy:
         self.sl_roi = float(r["stop_loss_roi_pct"])
         self.tp_roi = float(r["take_profit_roi_pct"])
 
-        self.settle_coin = config["currency"]["settle_coin"]
-
-        # instrument precision
+        # instrument precision / leverage (set via set_instrument)
         self.qty_step = Decimal("0.001")
         self.min_qty = Decimal("0.001")
         self.tick_size = Decimal("0.1")
+        self.max_leverage = Decimal("10")
+        self.min_leverage = Decimal("1")
+        self.lev_step = Decimal("0.01")
+        self.actual_leverage = Decimal("10")
+        self.leverage_set = False
 
         # state
-        self.pending = None          # active armed setup or None
+        self.pending = None
         self.last_closed_start = None
         self.interval_ms = INTERVAL_MS.get(self.timeframe, 300_000)
 
     # ------------------------------------------------------------------ #
-    # instrument / precision
+    # instrument / precision / leverage
     # ------------------------------------------------------------------ #
-    def load_instrument(self):
-        info = self.client.get_instrument_info(self.category, self.symbol)
+    def set_instrument(self, info):
         lot = info.get("lotSizeFilter", {})
         price = info.get("priceFilter", {})
+        lev = info.get("leverageFilter", {})
         if lot.get("qtyStep"):
             self.qty_step = Decimal(str(lot["qtyStep"]))
         if lot.get("minOrderQty"):
             self.min_qty = Decimal(str(lot["minOrderQty"]))
         if price.get("tickSize"):
             self.tick_size = Decimal(str(price["tickSize"]))
-        self.log.info(
-            "Instrument %s loaded: qtyStep=%s minQty=%s tickSize=%s" %
-            (self.symbol, self.qty_step, self.min_qty, self.tick_size))
+        if lev.get("maxLeverage"):
+            self.max_leverage = Decimal(str(lev["maxLeverage"]))
+        if lev.get("minLeverage"):
+            self.min_leverage = Decimal(str(lev["minLeverage"]))
+        if lev.get("leverageStep") and Decimal(str(lev["leverageStep"])) > 0:
+            self.lev_step = Decimal(str(lev["leverageStep"]))
+        self.actual_leverage = self._compute_leverage()
+
+    def _compute_leverage(self):
+        """actual_leverage = max_leverage * leverage_pct/100, floored to step
+        and clamped to [min_leverage, max_leverage]."""
+        target = self.max_leverage * Decimal(str(self.leverage_pct)) / Decimal("100")
+        if self.lev_step > 0:
+            stepped = (target / self.lev_step).to_integral_value(ROUND_DOWN) \
+                * self.lev_step
+        else:
+            stepped = target
+        if stepped < self.min_leverage:
+            stepped = self.min_leverage
+        if stepped > self.max_leverage:
+            stepped = self.max_leverage
+        return stepped
+
+    @property
+    def leverage(self):
+        return float(self.actual_leverage)
+
+    def leverage_str(self):
+        return format(self.actual_leverage.normalize(), "f")
 
     def round_qty(self, qty):
         q = Decimal(str(qty))
-        stepped = (q / self.qty_step).to_integral_value(ROUND_DOWN) \
-            * self.qty_step
-        return stepped
+        return (q / self.qty_step).to_integral_value(ROUND_DOWN) * self.qty_step
 
     def round_price(self, price):
         p = Decimal(str(price))
-        stepped = (p / self.tick_size).quantize(Decimal("1"),
-                                                rounding=ROUND_HALF_UP) \
-            * self.tick_size
-        return stepped
-
-    # ------------------------------------------------------------------ #
-    # account
-    # ------------------------------------------------------------------ #
-    def get_balance(self):
-        wallet, avail = self.client.get_coin_balance(
-            coin=self.settle_coin, account_type="UNIFIED")
-        # Use available balance for sizing; fall back to wallet balance.
-        return avail if avail > 0 else wallet
-
-    def open_position_count(self):
-        try:
-            pos = self.client.get_open_positions(
-                self.category, symbol=self.symbol)
-            return len(pos)
-        except BybitError as exc:
-            self.log.warning("could not fetch positions: %s" % exc)
-            return 0
+        return (p / self.tick_size).quantize(
+            Decimal("1"), rounding=ROUND_HALF_UP) * self.tick_size
 
     # ------------------------------------------------------------------ #
     # sizing & risk
@@ -146,29 +158,26 @@ class FVGStrategy:
     def update_fvgs(self, closed_candles):
         """Detect a freshly-completed FVG and arm / chain a setup.
 
-        Only runs when a *new* candle has just closed. Returns the FVG that
-        was registered this call, or None.
+        Only fires when a *new* candle has just closed since last check.
+        Returns the FVG registered this call, or None.
         """
         if len(closed_candles) < 3:
             return None
 
         newest = closed_candles[-1]
         if self.last_closed_start == newest["start"]:
-            return None  # no new closed candle since last check
+            return None
         first_run = self.last_closed_start is None
         self.last_closed_start = newest["start"]
         if first_run:
-            # On the very first poll, don't fire on historical gaps; just
-            # establish the baseline so we only trade gaps formed live.
-            self.log.info("Baseline set at candle start=%s" % newest["start"])
+            # Establish baseline so we only trade gaps formed live.
             return None
 
         threshold = self._threshold(closed_candles)
         idx = len(closed_candles) - 1
         fvg = detect_fvg_at(closed_candles, idx, threshold=threshold)
 
-        # Mitigation check: drop a pending setup whose gap was fully filled
-        # by this newly closed candle before we ever got an entry.
+        # Drop a pending setup whose gap was fully filled before entry.
         self._check_mitigation(newest)
 
         if fvg is None:
@@ -187,11 +196,11 @@ class FVGStrategy:
                     "chain": self.pending["chain"] + 1,
                 })
                 self.log.info(
-                    "Chained FVG #%d (%s) -> new entry mid=%.4f" %
-                    (self.pending["chain"], fvg.direction, fvg.mid))
+                    "[%s] Chained FVG #%d (%s) -> new entry mid=%.6f" %
+                    (self.symbol, self.pending["chain"], fvg.direction,
+                     fvg.mid))
                 return fvg
 
-        # start a fresh setup
         self.pending = {
             "direction": fvg.direction,
             "mid": fvg.mid,
@@ -202,8 +211,8 @@ class FVGStrategy:
             "triggered": False,
         }
         self.log.info(
-            "Armed %s FVG: top=%.4f bottom=%.4f mid=%.4f (await retrace)" %
-            (fvg.direction, fvg.top, fvg.bottom, fvg.mid))
+            "[%s] Armed %s FVG: top=%.6f bottom=%.6f mid=%.6f (await retrace)"
+            % (self.symbol, fvg.direction, fvg.top, fvg.bottom, fvg.mid))
         return fvg
 
     def _check_mitigation(self, candle):
@@ -212,76 +221,49 @@ class FVGStrategy:
         close = candle["close"]
         p = self.pending
         if p["direction"] == "long" and close < p["bottom"]:
-            self.log.info("Pending LONG FVG mitigated (close<%0.4f); dropped"
-                          % p["bottom"])
+            self.log.info("[%s] Pending LONG FVG mitigated; dropped"
+                          % self.symbol)
             self.pending = None
         elif p["direction"] == "short" and close > p["top"]:
-            self.log.info("Pending SHORT FVG mitigated (close>%0.4f); dropped"
-                          % p["top"])
+            self.log.info("[%s] Pending SHORT FVG mitigated; dropped"
+                          % self.symbol)
             self.pending = None
 
     # ------------------------------------------------------------------ #
-    # entry
+    # entry preparation (placement is done by the Bot)
     # ------------------------------------------------------------------ #
+    def has_pending(self):
+        return self.pending is not None and not self.pending["triggered"]
+
     def retrace_reached(self, last_price):
-        if self.pending is None or self.pending["triggered"]:
+        if not self.has_pending():
             return False
         mid = self.pending["mid"]
         if self.pending["direction"] == "long":
-            # bullish gap sits below price; wait for pullback down to mid
             return last_price <= mid
-        else:
-            # bearish gap sits above price; wait for pullback up to mid
-            return last_price >= mid
+        return last_price >= mid
 
-    def try_enter(self, last_price):
-        """If a pending setup's retrace is hit, open the position."""
-        if not self.retrace_reached(last_price):
-            return None
-
-        if self.open_position_count() >= self.max_open:
-            self.log.info("Max open positions reached; skipping entry.")
-            return None
-
+    def prepare_entry(self, balance, price):
+        """Return an order spec dict if a position can be sized, else None.
+        Does NOT place the order."""
         direction = self.pending["direction"]
-        balance = self.get_balance()
-        if balance <= 0:
-            self.log.warning("Balance is zero; cannot size position.")
-            return None
-
-        entry = last_price
-        qty = self.compute_qty(balance, entry)
+        qty = self.compute_qty(balance, price)
         if qty <= 0:
-            self.log.warning("Computed qty below minimum; skipping entry.")
             return None
-
-        tp, sl = self.compute_tp_sl(Decimal(str(entry)), direction)
-        side = "Buy" if direction == "long" else "Sell"
-
-        order = {
-            "side": side,
+        tp, sl = self.compute_tp_sl(Decimal(str(price)), direction)
+        return {
+            "symbol": self.symbol,
             "direction": direction,
+            "side": "Buy" if direction == "long" else "Sell",
             "qty": qty,
-            "entry": entry,
+            "entry": price,
             "tp": tp,
             "sl": sl,
             "chain": self.pending["chain"],
+            "leverage": self.leverage_str(),
         }
 
-        if self.cfg["engine"].get("dry_run"):
-            self.log.info("[DRY RUN] would open %s qty=%s entry=%.4f "
-                          "tp=%s sl=%s" % (side, qty, entry, tp, sl))
-        else:
-            resp = self.client.place_market_order(
-                self.category, self.symbol, side, qty,
-                take_profit=tp, stop_loss=sl, position_idx=0)
-            order_id = resp.get("result", {}).get("orderId")
-            order["order_id"] = order_id
-            self.log.info(
-                "OPENED %s %s qty=%s @~%.4f TP=%s SL=%s (chain=%d) id=%s" %
-                (direction.upper(), self.symbol, qty, entry, tp, sl,
-                 self.pending["chain"], order_id))
-
-        self.pending["triggered"] = True
+    def mark_entered(self):
+        if self.pending is not None:
+            self.pending["triggered"] = True
         self.pending = None
-        return order

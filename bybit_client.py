@@ -238,6 +238,42 @@ class BybitClient:
         lst = resp.get("result", {}).get("list", [])
         return lst[0] if lst else {}
 
+    def get_instruments_page(self, category, limit=1000, cursor=None):
+        params = {"category": category, "limit": int(limit)}
+        if cursor:
+            params["cursor"] = cursor
+        resp = self.request("GET", "/v5/market/instruments-info",
+                            params=params)
+        return resp.get("result", {})
+
+    def get_all_instruments(self, category, status="Trading",
+                            quote_coin=None, contract_type="LinearPerpetual"):
+        """Return list of instrument dicts for a category, following cursor."""
+        out = []
+        cursor = None
+        while True:
+            result = self.get_instruments_page(category, limit=1000,
+                                                cursor=cursor)
+            for it in result.get("list", []):
+                if status and it.get("status") != status:
+                    continue
+                if quote_coin and it.get("quoteCoin") != quote_coin:
+                    continue
+                if contract_type and it.get("contractType") != contract_type:
+                    continue
+                out.append(it)
+            cursor = result.get("nextPageCursor")
+            if not cursor:
+                break
+        return out
+
+    def get_all_tickers(self, category):
+        """Return all tickers for a category in a single request."""
+        resp = self.request("GET", "/v5/market/tickers", params={
+            "category": category,
+        })
+        return resp.get("result", {}).get("list", [])
+
     # ------------------------------------------------------------------ #
     # private account endpoints
     # ------------------------------------------------------------------ #

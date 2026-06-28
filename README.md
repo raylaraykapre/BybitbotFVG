@@ -18,8 +18,10 @@ for full credit and license terms.
 
 ## What the bot does
 
-1. Reads closed candles of your chosen timeframe from Bybit.
-2. Detects Fair Value Gaps using the exact LuxAlgo rule:
+1. **Scans every USDT perpetual pair** on Bybit (configurable; can be limited
+   to a chosen list).
+2. Reads closed candles of your chosen timeframe and detects Fair Value Gaps
+   using the exact LuxAlgo rule:
    - **Bullish FVG** → arms a **LONG**.
    - **Bearish FVG** → arms a **SHORT**.
 3. Waits for price to **retrace back to the mid** of the identified FVG, then
@@ -29,13 +31,24 @@ for full credit and license terms.
    mid of the newer FVG**. This continues for up to **3** consecutive FVGs
    (`max_fvg_chain`).
 5. Sizes every position at **85%** of wallet balance (`position_size_pct`).
-6. Sets **Stop Loss** and **Take Profit** by **ROI** exactly like Bybit's TP/SL
+6. Sets leverage **per pair** as a **percent of that pair's maximum leverage**
+   (`leverage_pct`). For example, at `leverage_pct = 75`:
+   - a pair whose max leverage is **100x** → **75x**
+   - a pair whose max leverage is **12x** → **9x** (75% of 12)
+   - a pair whose max leverage is **50x** → **37.5x** (rounded to the pair's
+     leverage step)
+7. Sets **Stop Loss** and **Take Profit** by **ROI** exactly like Bybit's TP/SL
    menu:
    - Stop Loss at **30% ROI**
    - Take Profit at **350% ROI**
-   - (ROI → price conversion uses your configured leverage:
+   - (ROI → price uses that pair's actual leverage:
      `price_move = ROI% / 100 / leverage`.)
-7. Reports balances and PnL in **Philippine Peso (PHP)**.
+8. Reports balances and PnL in **Philippine Peso (PHP)**.
+
+> **Leverage % examples (your request):** if a pair's max is **100x**, `75`
+> means **75x**; if a pair's max is **12x**, `50` means **6x**. The bot reads
+> each pair's max leverage from Bybit and applies your percentage to it,
+> snapping to the pair's allowed leverage step.
 
 ---
 
@@ -95,14 +108,16 @@ There is nothing to `pip install`.
   },
   "trade": {
     "category": "linear",                 // USDT perpetuals
-    "symbol": "BTCUSDT",                  // pair to trade
+    "symbols": "ALL",                     // "ALL" pairs, or ["BTCUSDT","ETHUSDT"]
+    "quote_coin": "USDT",                 // only scan pairs quoted in this coin
     "timeframe": "5",                     // 1,3,5,15,30,60,120,240,360,720,D,W,M
-    "leverage": 10,                       // used for sizing & ROI->price math
+    "leverage_pct": 75,                   // % of EACH pair's MAX leverage
     "position_size_pct": 85,              // 85% of wallet per position
-    "max_open_positions": 1,              // current open positions allowed
+    "max_open_positions": 1,              // current open positions allowed (global)
     "max_fvg_chain": 3,                   // chain up to 3 consecutive FVGs
     "fvg_threshold_pct": 0.0,             // min gap size %
-    "auto_threshold": false               // LuxAlgo "Auto" threshold
+    "auto_threshold": false,              // LuxAlgo "Auto" threshold
+    "max_symbols": 0                      // 0 = no limit; else cap pairs scanned
   },
   "risk": {
     "stop_loss_roi_pct": 30,              // SL at 30% ROI
@@ -120,8 +135,9 @@ There is nothing to `pip install`.
     "min_balance_threshold": 10000
   },
   "engine": {
-    "poll_seconds": 5,                    // how often to check price
-    "kline_limit": 200,
+    "poll_seconds": 5,                    // how often to check prices/entries
+    "kline_limit": 60,                    // candles fetched per symbol
+    "scan_batch": 30,                     // symbols whose klines refresh per tick
     "log_file": "bot.log",
     "dry_run": false                      // true = simulate, place no orders
   }
@@ -130,7 +146,20 @@ There is nothing to `pip install`.
 
 Everything you asked to be editable lives here: **API key/secret**, **stop
 loss & take profit (by ROI)**, **current open positions** (`max_open_positions`),
-and the **timeframe to trade from**.
+the **timeframe to trade from**, and the **leverage percentage**
+(`leverage_pct`). Set `symbols` to `"ALL"` to scan every USDT perpetual, or a
+list to restrict it.
+
+### How scanning all pairs works (rate-friendly)
+- Live prices come from **one** `tickers` call per tick (covers all symbols).
+- Open positions come from **one** call per tick.
+- Klines are refreshed **round-robin**, `scan_batch` symbols per tick, so the
+  whole universe is rescanned every `~(symbols / scan_batch) * poll_seconds`.
+  With ~500 pairs, `scan_batch=30`, `poll=5s`, that's a full pass roughly
+  every 80s — well inside a 5-minute candle. Increase `scan_batch` to scan
+  faster, lower it if you hit rate limits.
+- Leverage is set **lazily** the first time the bot trades a given pair, so it
+  doesn't fire hundreds of calls on startup.
 
 ---
 

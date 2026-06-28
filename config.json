@@ -3,18 +3,21 @@
     "api_key": "YOUR_DEMO_API_KEY",
     "api_secret": "YOUR_DEMO_API_SECRET",
     "demo": true,
+    "testnet": false,
     "recv_window": 20000
   },
   "trade": {
     "category": "linear",
-    "symbol": "BTCUSDT",
+    "symbols": "ALL",
+    "quote_coin": "USDT",
     "timeframe": "5",
-    "leverage": 10,
+    "leverage_pct": 75,
     "position_size_pct": 85,
     "max_open_positions": 1,
     "max_fvg_chain": 3,
     "fvg_threshold_pct": 0.0,
-    "auto_threshold": false
+    "auto_threshold": false,
+    "max_symbols": 0
   },
   "risk": {
     "stop_loss_roi_pct": 30,
@@ -33,7 +36,8 @@
   },
   "engine": {
     "poll_seconds": 5,
-    "kline_limit": 200,
+    "kline_limit": 60,
+    "scan_batch": 30,
     "log_file": "bot.log",
     "dry_run": false
   }
