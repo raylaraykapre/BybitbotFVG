@@ -159,6 +159,8 @@ class Bot:
         n = len(self.scan_order)
         batch = min(self.scan_batch, n)
         for _ in range(batch):
+            if not self._running:
+                return
             symbol = self.scan_order[self.scan_idx % n]
             self.scan_idx = (self.scan_idx + 1) % n
             strat = self.strategies.get(symbol)
@@ -302,12 +304,25 @@ class Bot:
             except Exception as exc:  # noqa: BLE001
                 self.log.exception("Error: %s" % exc)
             tick += 1
-            time.sleep(self.poll)
+            self._sleep(self.poll)
 
         self.log.info("Bot stopped.")
 
+    def _sleep(self, seconds):
+        """Sleep that wakes up immediately when stop() is called."""
+        end = time.monotonic() + seconds
+        while self._running:
+            remaining = end - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(0.2, remaining))
+
     def stop(self, *_):
-        self.log.info("Stopping.")
+        if not self._running:
+            # Second Ctrl+C: quit now, no waiting.
+            print("\nForce quit.")
+            os._exit(0)
+        print("\nStopping (press Ctrl+C again to force quit).")
         self._running = False
 
 
